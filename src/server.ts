@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import { protocolVersion, type ClientFrame, type ServerFrame } from '@agent-hub/core'
 import type { Runtime } from './runtime.js'
+import { Scheduler } from './schedules.js'
 
 interface Conn {
   socket: WebSocket
@@ -14,6 +15,7 @@ interface Conn {
 
 export interface ServerHandle {
   app: FastifyInstance
+  scheduler: Scheduler
   close(): Promise<void>
 }
 
@@ -28,6 +30,7 @@ export async function startServer(runtime: Runtime, token: string): Promise<Serv
     const data = JSON.stringify(frame)
     for (const c of conns) if (c.authed && c.socket.readyState === c.socket.OPEN) c.socket.send(data)
   }
+  const scheduler = new Scheduler(runtime, runtime.db, broadcast)
 
   app.get('/health', async () => ({ ok: true, device: runtime.config.deviceName, protocol_version: protocolVersion }))
 
@@ -144,13 +147,37 @@ export async function startServer(runtime: Runtime, token: string): Promise<Serv
         broadcast({ type: 'budget.overridden', run_id: frame.run_id, scope: frame.scope, limit_usd: frame.limit_usd })
         return
       }
+      case 'schedule.list':
+        send({ type: 'schedule.list', schedules: scheduler.list(), paused: scheduler.paused })
+        return
+      case 'schedule.upsert':
+        scheduler.upsert(frame.schedule)
+        return
+      case 'schedule.delete':
+        if (!scheduler.delete(frame.id)) throw new Error('agendamento nao encontrado')
+        return
+      case 'schedule.run_now':
+        void scheduler.runNow(frame.id).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
+        return
+      case 'automation.pause':
+        scheduler.setPaused(true)
+        return
+      case 'automation.resume':
+        scheduler.setPaused(false)
+        return
+      case 'automation.runs':
+        send({ type: 'automation.runs', runs: scheduler.runs(frame.automation_id, frame.limit) })
+        return
     }
   }
 
   await app.listen({ host: runtime.config.host, port: runtime.config.port })
+  scheduler.start()
   return {
     app,
+    scheduler,
     async close() {
+      scheduler.stop()
       for (const c of runs.values()) c.abort()
       await runtime.mcp.close()
       await app.close()

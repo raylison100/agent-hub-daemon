@@ -30,6 +30,7 @@ import {
   type ToolCallPart,
   type ToolDefinition,
 } from '@agent-hub/core'
+import type { Database as DatabaseType } from 'better-sqlite3'
 import { ApprovalQueue, type ApprovalDecision, type PendingApproval } from './approvals.js'
 import type { DaemonConfig } from './config.js'
 import { openDb } from './db.js'
@@ -42,13 +43,18 @@ export interface RunRequest {
   emit: (event: RunEvent) => void
   onApproval: (info: PendingApproval) => void
   signal?: AbortSignal
+  policyOverride?: Policy
+  budgetOverride?: { runUsd?: number; sessionUsd?: number }
 }
+
+export const draftPolicy: Policy = { read: 'allow', write: 'deny', exec: 'deny' }
 
 const summarySystem =
   'Voce resume conversas entre um usuario e um agente de programacao. Preserve decisoes tomadas, arquivos tocados, ' +
   'erros encontrados e o que ainda falta. Sem introducao, sem opiniao, em topicos curtos.'
 
 export class Runtime {
+  readonly db: DatabaseType
   readonly ledger: Ledger
   readonly store: SessionStore
   readonly registry = new ToolRegistry()
@@ -61,6 +67,7 @@ export class Runtime {
 
   constructor(readonly config: DaemonConfig) {
     const db = openDb(config.dbPath)
+    this.db = db
     this.ledger = new Ledger(db)
     this.store = new SessionStore(db, this.ledger)
     this.registry.registerAll(nativeTools())
@@ -148,6 +155,8 @@ export class Runtime {
     const adapter = createAdapter(profile)
     const agentDay = this.repo.budgets.agents[profile.name]?.day_usd
     const budget = budgetFor(this.ledger, profile, { runId, sessionId: req.sessionId }, agentDay, this.repo.budgets.global_month_usd)
+    if (req.budgetOverride?.runUsd !== undefined) budget.override('run', req.budgetOverride.runUsd)
+    if (req.budgetOverride?.sessionUsd !== undefined) budget.override('session', req.budgetOverride.sessionUsd)
     this.activeBudgets.set(runId, budget)
     const history = this.store.history(req.sessionId)
     const runner = new AgentRunner({
@@ -155,7 +164,7 @@ export class Runtime {
       profile,
       tools: this.registry,
       skills: this.repo.skills,
-      policy: this.policyFor(profile),
+      policy: req.policyOverride ?? this.policyFor(profile),
       pricing: this.pricing,
       ledger: this.ledger,
       budget,

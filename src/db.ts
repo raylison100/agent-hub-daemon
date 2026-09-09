@@ -71,5 +71,28 @@ function migrate(db: DatabaseType): void {
       token_hash TEXT NOT NULL,
       last_seen INTEGER
     );
+    CREATE TABLE IF NOT EXISTS schedules (
+      id TEXT PRIMARY KEY,
+      spec_json TEXT NOT NULL,
+      source TEXT NOT NULL,
+      last_run_at INTEGER,
+      next_run_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS automation_runs (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      automation_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      status TEXT NOT NULL,
+      cost_usd REAL NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS automation_runs_id_ts ON automation_runs(automation_id, started_at);
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `)
 }

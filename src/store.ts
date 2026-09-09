@@ -7,6 +7,7 @@ interface SessionRow {
   agent: string
   workspace: string
   title: string
+  origin: string
   created_at: number
   updated_at: number
 }
@@ -23,13 +24,22 @@ export class SessionStore {
     private readonly ledger: Ledger,
   ) {}
 
-  create(agent: string, workspace: string, title?: string): SessionSummary {
+  create(agent: string, workspace: string, title?: string, origin = 'user'): SessionSummary {
     const now = Date.now()
     const id = randomUUID()
     this.db
-      .prepare('INSERT INTO sessions (id, agent, workspace, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, agent, workspace, title ?? 'Nova sessao', now, now)
+      .prepare('INSERT INTO sessions (id, agent, workspace, title, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, agent, workspace, title ?? 'Nova sessao', origin, now, now)
     return this.get(id)!
+  }
+
+  setting(key: string): string | undefined {
+    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
+    return row?.value
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value)
   }
 
   get(id: string): SessionSummary | undefined {
@@ -116,6 +126,7 @@ export class SessionStore {
       agent: row.agent,
       workspace: row.workspace,
       title: row.title,
+      origin: row.origin,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       costUsd: this.ledger.totals({ sessionId: row.id }).costUsd,

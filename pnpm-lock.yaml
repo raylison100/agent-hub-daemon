@@ -20,6 +20,9 @@ importers:
       commander:
         specifier: ^15.0.0
         version: 15.0.0
+      croner:
+        specifier: ^10.0.1
+        version: 10.0.1
       fastify:
         specifier: ^5.12.3
         version: 5.12.3
@@ -389,6 +392,10 @@ packages:
   cookie@1.1.1:
     resolution: {integrity: sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ==}
     engines: {node: '>=18'}
+
+  croner@10.0.1:
+    resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
+    engines: {node: '>=18.0'}
 
   dequal@2.0.3:
     resolution: {integrity: sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==}
@@ -804,6 +811,8 @@ snapshots:
   commander@15.0.0: {}
 
   cookie@1.1.1: {}
+
+  croner@10.0.1: {}
 
   dequal@2.0.3: {}
 

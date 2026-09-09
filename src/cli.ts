@@ -7,6 +7,7 @@ import type { ReportGroup, RunEvent } from '@agent-hub/core'
 import type { PendingApproval } from './approvals.js'
 import { ensureToken, exampleConfig, loadConfig } from './config.js'
 import { Runtime } from './runtime.js'
+import { Scheduler } from './schedules.js'
 import { startServer } from './server.js'
 
 const program = new Command()
@@ -75,6 +76,19 @@ program
     const runtime = new Runtime(loadConfig())
     for (const a of runtime.agents()) console.log(`${a.name}\t${a.provider}/${a.model}\t${a.reasoning}\t${a.description}`)
     reportErrors(runtime)
+  })
+
+program
+  .command('schedules')
+  .description('Lista agendamentos e o estado do interruptor geral')
+  .action(() => {
+    const runtime = new Runtime(loadConfig())
+    const scheduler = new Scheduler(runtime, runtime.db, () => undefined)
+    console.log(`automacao ${scheduler.paused ? 'pausada' : 'ativa'}`)
+    for (const s of scheduler.list()) {
+      const next = s.nextRunAt ? new Date(s.nextRunAt).toISOString() : 'nunca'
+      console.log(`${s.id}\t${s.enabled ? 'on' : 'off'}\t${s.cron ?? `at ${s.at}`}\t${s.agent}\t${s.mode}\tproximo ${next}\thoje ${s.todayUsd.toFixed(4)} USD`)
+    }
   })
 
 program
