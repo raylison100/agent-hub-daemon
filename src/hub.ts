@@ -73,7 +73,7 @@ export class ConnectionHub {
         return
       case 'session.create': {
         const workspace = runtime.assertWorkspace(frame.workspace)
-        const { agent, routed } = runtime.resolveAgent(frame.agent, frame.text ?? frame.title ?? '', workspace)
+        const { agent, routed } = await runtime.resolveAgent(frame.agent, frame.text ?? frame.title ?? '', workspace)
         const session = runtime.store.create(agent, workspace, frame.title)
         send({ type: 'session.created', session, routed: routed ? { intent: routed.intent, rule: routed.rule } : undefined })
         this.broadcast({ type: 'session.updated', session })

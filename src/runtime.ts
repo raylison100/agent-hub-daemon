@@ -1,21 +1,26 @@
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve, sep } from 'node:path'
 import {
   AgentRunner,
   HookRunner,
   Ledger,
   McpBridge,
   Pricing,
+  PluginsFileSchema,
   Redactor,
   ToolRegistry,
   activatedSkills,
   budgetFor,
+  classifierPrompt,
   createAdapter,
   defaultPolicy,
+  gitPluginDir,
   loadAgentsRepo,
   messageText,
   nativeTools,
+  parseClassifierAnswer,
   route,
   type AgentProfile,
   type AgentSummary,
@@ -114,12 +119,73 @@ export class Runtime {
     return this.repo.policies.get(profile.policy) ?? defaultPolicy
   }
 
-  /** Escolhe o agente: o explicito vence; sem ele, a primeira regra de roteamento que casar. */
-  resolveAgent(explicit: string | undefined, text: string, workspace: string): { agent: string; routed: RouteResult | null } {
+  /** Escolhe o agente: o explicito vence; depois as regras por palavra chave; por fim o classificador por modelo, se configurado. */
+  async resolveAgent(explicit: string | undefined, text: string, workspace: string): Promise<{ agent: string; routed: RouteResult | null }> {
     if (explicit) return { agent: this.profile(explicit).name, routed: null }
-    const routed = route(this.repo.routing, { text, workspace })
+    const ctx = { text, workspace }
+    let routed = route(this.repo.routing, ctx)
+    if (!routed && this.repo.routing.classifier) {
+      const intent = await this.classify(text)
+      if (intent) routed = route(this.repo.routing, ctx, intent)
+    }
     if (!routed) throw new Error('nenhuma regra de roteamento casou; informe o agente')
     return { agent: this.profile(routed.agent).name, routed }
+  }
+
+  /** Classificador de intencao por modelo barato, com custo lancado no ledger sob a sessao `roteamento`. */
+  private async classify(text: string): Promise<string | null> {
+    const classifier = this.repo.routing.classifier!
+    const profile = this.repo.profiles.get(classifier.agent)
+    if (!profile) return null
+    const adapter = createAdapter(profile)
+    const result = await adapter.chat({
+      system: 'Voce classifica pedidos. Responda apenas com o nome da intencao.',
+      messages: [{ role: 'user', parts: [{ type: 'text', text: classifierPrompt(this.repo.routing.intents, text, classifier.max_prompt_chars) }] }],
+      tools: [],
+      maxOutput: 20,
+      reasoning: 'low',
+      systemCacheTtl: '5m',
+      providerOptions: profile.provider_options,
+    })
+    this.ledger.record({
+      ts: Date.now(),
+      sessionId: 'roteamento',
+      runId: randomUUID(),
+      step: 0,
+      agent: profile.name,
+      provider: adapter.provider,
+      model: result.model,
+      usage: result.usage,
+      costUsd: this.pricing.cost(adapter.provider, result.model, result.usage),
+      pricingVersion: this.pricing.version,
+      latencyMs: result.latencyMs,
+      stopReason: 'classify',
+    })
+    return parseClassifierAnswer(messageText(result.message), this.repo.routing.intents)
+  }
+
+  /** Clona plugins declarados por git em agents/.plugins e atualiza os ja clonados. */
+  syncGitPlugins(log: (m: string) => void): void {
+    const file = join(this.config.agentsDir, 'plugins.json')
+    if (!existsSync(file)) return
+    const entries = PluginsFileSchema.parse(JSON.parse(readFileSync(file, 'utf8'))).plugins.filter((e) => e.enabled && e.git)
+    for (const entry of entries) {
+      const dir = gitPluginDir(this.config.agentsDir, entry.git!)
+      try {
+        if (existsSync(dir)) {
+          execFileSync('git', ['-C', dir, 'pull', '--ff-only', '--quiet'], { stdio: 'pipe' })
+          log(`plugin atualizado: ${dir}`)
+        } else {
+          mkdirSync(dirname(dir), { recursive: true })
+          const args = ['clone', '--depth', '1', '--quiet', ...(entry.ref ? ['--branch', entry.ref] : []), entry.git!, dir]
+          execFileSync('git', args, { stdio: 'pipe' })
+          log(`plugin clonado: ${dir}`)
+        }
+      } catch (err) {
+        log(`plugin ${entry.git}: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+    this.reload()
   }
 
   /** Confere se o diretorio esta na lista de workspaces permitidos do config. */

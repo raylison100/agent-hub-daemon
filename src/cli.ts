@@ -66,18 +66,44 @@ program
 
 program
   .command('pair')
-  .description('Mostra os dados para conectar um cliente, local ou pelo relay')
-  .action(() => {
+  .description('Mostra os dados para conectar um cliente, local ou pelo relay, com link e QR de emparelhamento')
+  .option('--web <url>', 'URL onde a interface web esta servida', 'http://localhost:5173')
+  .option('--no-qr', 'nao desenhar o QR no terminal')
+  .action(async (opts: { web: string; qr: boolean }) => {
     const config = loadConfig()
+    const token = ensureToken(config.home)
     console.log(`url local: ws://${config.host}:${config.port}/ws`)
-    console.log(`token do daemon: ${ensureToken(config.home)}`)
-    if (!config.relayUrl) {
+    console.log(`token do daemon: ${token}`)
+    const pair: Record<string, string> = { mode: 'direct', url: `ws://${config.host}:${config.port}/ws`, token }
+    if (config.relayUrl) {
+      const account = ensureAccountToken(config.home)
+      const device = ensureDeviceId(config.home)
+      console.log(`relay: ${config.relayUrl}`)
+      console.log(`token de conta: ${account}`)
+      console.log(`dispositivo: ${device} (${config.deviceName})`)
+      Object.assign(pair, { mode: 'relay', url: config.relayUrl, account, device })
+    } else {
       console.log('relay: nao configurado (relay_url no config.toml)')
-      return
     }
-    console.log(`relay: ${config.relayUrl}`)
-    console.log(`token de conta: ${ensureAccountToken(config.home)}`)
-    console.log(`dispositivo: ${ensureDeviceId(config.home)} (${config.deviceName})`)
+    const link = `${opts.web.replace(/\/$/, '')}/connect#pair=${Buffer.from(JSON.stringify(pair)).toString('base64url')}`
+    console.log(`\nlink de emparelhamento (contem segredos, nao compartilhe):\n${link}`)
+    if (opts.qr) {
+      const { toString } = await import('qrcode')
+      console.log(await toString(link, { type: 'terminal', small: true }))
+    }
+  })
+
+program
+  .command('plugins')
+  .description('Sincroniza plugins declarados por git em agents/plugins.json e lista os carregados')
+  .argument('[acao]', 'sync para clonar ou atualizar', 'list')
+  .action((acao: string) => {
+    const runtime = new Runtime(loadConfig())
+    if (acao === 'sync') runtime.syncGitPlugins((m) => console.log(m))
+    for (const p of runtime.repo.plugins) {
+      console.log(`${p.name}\t${p.dir}\tskills ${p.skills.size}\tagentes ${p.profiles.size}\tmcp ${Object.keys(p.mcp).length}\thooks ${p.hooks.length}`)
+    }
+    reportErrors(runtime)
   })
 
 program
@@ -174,7 +200,7 @@ program
     let pending: string | undefined
     if (!session) {
       if (!opts.agent) pending = (await rl.question('\nvoce> ')).trim()
-      const { agent, routed } = runtime.resolveAgent(opts.agent, pending ?? '', workspace)
+      const { agent, routed } = await runtime.resolveAgent(opts.agent, pending ?? '', workspace)
       if (routed) console.log(`[roteamento] intencao ${routed.intent ?? 'nenhuma'} escolheu ${agent}`)
       session = runtime.store.create(agent, workspace)
     }
