@@ -134,6 +134,30 @@ e avanca quando a ferramenta de sinal (`plan`, `done`) e chamada ou quando
 `max_steps` da fase termina. Ao acabar a ultima fase, o run termina. Ver
 `../docs/11-determinismo.md`.
 
+## Workflows
+
+`agents/workflows/*.yaml` descrevem sequencias fixas: etapas `tool` rodam
+sem modelo, etapas `agent` chamam um perfil com ferramentas restritas e
+podem exigir `output_schema`; `retry` e o unico laco. O custo maximo e
+calculado antes de rodar. `agent-hub-daemon workflows` lista;
+`agent-hub-daemon workflows <nome> --workspace <dir> --input k=v` roda.
+
+## Sandbox por container
+
+Perfil com `sandbox: { image: "node:22", network: false }` executa
+`run_command` dentro de `docker run --rm` com o workspace montado em
+`/workspace`. Execucao `allow` em perfil sem sandbox e rebaixada para `ask`.
+
+## Observabilidade e notificacoes
+
+- `otel_endpoint` no config (ou `OTEL_EXPORTER_OTLP_ENDPOINT`) liga um span
+  por chamada ao modelo e por ferramenta, em OTLP/HTTP JSON com atributos
+  `gen_ai.*`.
+- Push do PWA: chaves VAPID em `~/.agent-hub/vapid.json`, assinaturas no
+  SQLite, envio em aprovacao pendente, fim de run e automacao concluida.
+- `agent-hub-daemon pair` imprime link e QR de emparelhamento para a
+  interface; o link carrega os segredos, nao compartilhe.
+
 ## Delegacao
 
 Um perfil com `delegates: [outro]` ganha a ferramenta `delegate`. O run
