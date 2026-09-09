@@ -1,5 +1,15 @@
 import WebSocket from 'ws'
-import { relayHeaders, type DaemonToRelay, type RelayToDaemon, type ServerFrame } from '@agent-hub/core'
+import {
+  deriveE2eKey,
+  isSealed,
+  openFrame,
+  relayHeaders,
+  sealFrame,
+  type ClientFrame,
+  type DaemonToRelay,
+  type RelayToDaemon,
+  type ServerFrame,
+} from '@agent-hub/core'
 import type { Conn, ConnectionHub } from './hub.js'
 import type { FireResult } from './triggers.js'
 
@@ -13,12 +23,13 @@ export interface RelayLinkOptions {
 
 const backoffMs = [2000, 5000, 10000, 30000]
 
-/** Mantem a conexao de saida com o relay e traduz cada canal em uma conexao do hub. */
+/** Mantem a conexao de saida com o relay, cifra os quadros de ponta a ponta e traduz cada canal em uma conexao do hub. */
 export class RelayLink {
   private socket: WebSocket | null = null
   private channels = new Map<string, Conn>()
   private attempts = 0
   private stopped = false
+  private key: CryptoKey | null = null
 
   constructor(
     private readonly opts: RelayLinkOptions,
@@ -28,7 +39,10 @@ export class RelayLink {
 
   start(): void {
     this.stopped = false
-    this.connect()
+    void deriveE2eKey(this.opts.accountToken).then((key) => {
+      this.key = key
+      this.connect()
+    })
   }
 
   stop(): void {
@@ -49,9 +63,9 @@ export class RelayLink {
     this.socket = socket
     socket.on('open', () => {
       this.attempts = 0
-      this.opts.log(`relay conectado em ${this.opts.url}`)
+      this.opts.log(`relay conectado em ${this.opts.url} (quadros cifrados de ponta a ponta)`)
     })
-    socket.on('message', (raw) => this.receive(JSON.parse(String(raw)) as RelayToDaemon))
+    socket.on('message', (raw) => void this.receive(JSON.parse(String(raw)) as RelayToDaemon))
     socket.on('error', (err) => this.opts.log(`relay: ${err.message}`))
     socket.on('close', () => {
       for (const conn of this.channels.values()) this.hub.detach(conn)
@@ -63,17 +77,23 @@ export class RelayLink {
     })
   }
 
-  private receive(msg: RelayToDaemon): void {
+  private async receive(msg: RelayToDaemon): Promise<void> {
     switch (msg.t) {
       case 'open': {
-        const conn: Conn = { authed: false, client: msg.client, send: (frame: ServerFrame) => this.send({ t: 'frame', ch: msg.ch, frame }) }
+        const conn: Conn = { authed: false, client: msg.client, send: (frame: ServerFrame) => void this.sendFrame(msg.ch, frame) }
         this.channels.set(msg.ch, conn)
         this.hub.attach(conn)
         return
       }
       case 'frame': {
         const conn = this.channels.get(msg.ch)
-        if (conn) void this.hub.handle(conn, msg.frame)
+        if (!conn) return
+        try {
+          const frame = isSealed(msg.frame) ? await openFrame<ClientFrame>(this.key!, msg.frame) : msg.frame
+          void this.hub.handle(conn, frame)
+        } catch {
+          conn.send({ type: 'error', message: 'quadro cifrado invalido' })
+        }
         return
       }
       case 'close': {
@@ -91,6 +111,10 @@ export class RelayLink {
         this.send({ t: 'pong' })
         return
     }
+  }
+
+  private async sendFrame(ch: string, frame: ServerFrame): Promise<void> {
+    this.send({ t: 'frame', ch, frame: this.key ? await sealFrame(this.key, frame) : frame })
   }
 
   private send(msg: DaemonToRelay): void {

@@ -124,8 +124,11 @@ export class Runtime {
     return p
   }
 
+  /** Politica do perfil. Execucao `allow` sem sandbox por container cai para `ask`, como manda o documento 06. */
   policyFor(profile: AgentProfile): Policy {
-    return this.repo.policies.get(profile.policy) ?? defaultPolicy
+    const policy = this.repo.policies.get(profile.policy) ?? defaultPolicy
+    if (policy.exec === 'allow' && !profile.sandbox) return { ...policy, exec: 'ask' }
+    return policy
   }
 
   /** Escolhe o agente: o explicito vence; depois as regras por palavra chave; por fim o classificador por modelo, se configurado. */
@@ -261,6 +264,7 @@ export class Runtime {
       preloadSkills: activatedSkills(this.repo.skills, profile.skills, { text: req.text, workspace }, this.repo.routing.intents),
       delegate: (agent, task) => this.delegate(req, workspace, runId, agent, task),
       hooks: this.hookRunner,
+      sandbox: profile.sandbox,
       signal: req.signal,
     })
     try {
@@ -321,6 +325,7 @@ export class Runtime {
       },
       redact: (t) => this.redactor.redact(t),
       hooks: this.hookRunner,
+      sandbox: child.sandbox,
       signal: req.signal,
     })
     try {
