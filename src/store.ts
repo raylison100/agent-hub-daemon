@@ -51,7 +51,9 @@ export class SessionStore {
     const rows = this.db
       .prepare('SELECT content_json FROM messages WHERE session_id = ? ORDER BY id')
       .all(sessionId) as { content_json: string }[]
-    return rows.map((r) => JSON.parse(r.content_json) as Message)
+    const all = rows.map((r) => JSON.parse(r.content_json) as Message)
+    const lastCompaction = all.map((m, i) => (m.kind === 'compaction' ? i : -1)).reduce((a, b) => Math.max(a, b), -1)
+    return lastCompaction > 0 ? all.slice(lastCompaction) : all
   }
 
   appendMessages(sessionId: string, runId: string, messages: Message[]): void {

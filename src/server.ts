@@ -72,10 +72,10 @@ export async function startServer(runtime: Runtime, token: string): Promise<Serv
         send({ type: 'agents.list', agents: runtime.agents(), errors: runtime.repo.errors })
         return
       case 'session.create': {
-        runtime.profile(frame.agent)
         const workspace = runtime.assertWorkspace(frame.workspace)
-        const session = runtime.store.create(frame.agent, workspace, frame.title)
-        send({ type: 'session.created', session })
+        const { agent, routed } = runtime.resolveAgent(frame.agent, frame.text ?? frame.title ?? '', workspace)
+        const session = runtime.store.create(agent, workspace, frame.title)
+        send({ type: 'session.created', session, routed: routed ? { intent: routed.intent, rule: routed.rule } : undefined })
         broadcast({ type: 'session.updated', session })
         return
       }
@@ -138,8 +138,12 @@ export async function startServer(runtime: Runtime, token: string): Promise<Serv
       case 'cost.report':
         send({ type: 'cost.report', rows: runtime.ledger.report(frame.group, { since: frame.since }) })
         return
-      case 'budget.override':
-        throw new Error('budget.override entra na fase 2 com a interface')
+      case 'budget.override': {
+        const ok = runtime.overrideBudget(frame.run_id, frame.scope, frame.limit_usd)
+        if (!ok) throw new Error('run nao esta ativo')
+        broadcast({ type: 'budget.overridden', run_id: frame.run_id, scope: frame.scope, limit_usd: frame.limit_usd })
+        return
+      }
     }
   }
 

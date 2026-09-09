@@ -98,19 +98,27 @@ program
 program
   .command('chat')
   .description('Conversa interativa com um agente, aprovando ferramentas pelo terminal')
-  .requiredOption('-a, --agent <name>', 'perfil do agente')
+  .option('-a, --agent <name>', 'perfil do agente; sem ele, o roteamento por regra decide pela primeira mensagem')
   .requiredOption('-w, --workspace <dir>', 'diretorio permitido')
   .option('-s, --session <id>', 'continuar sessao existente')
-  .action(async (opts: { agent: string; workspace: string; session?: string }) => {
+  .action(async (opts: { agent?: string; workspace: string; session?: string }) => {
     const runtime = new Runtime(loadConfig())
     reportErrors(runtime)
     const workspace = runtime.assertWorkspace(opts.workspace)
-    const session = opts.session ? runtime.store.get(opts.session) : runtime.store.create(opts.agent, workspace)
-    if (!session) throw new Error('sessao nao encontrada')
     const rl = createInterface({ input: process.stdin, output: process.stdout })
+    let session = opts.session ? runtime.store.get(opts.session) : undefined
+    if (opts.session && !session) throw new Error('sessao nao encontrada')
+    let pending: string | undefined
+    if (!session) {
+      if (!opts.agent) pending = (await rl.question('\nvoce> ')).trim()
+      const { agent, routed } = runtime.resolveAgent(opts.agent, pending ?? '', workspace)
+      if (routed) console.log(`[roteamento] intencao ${routed.intent ?? 'nenhuma'} escolheu ${agent}`)
+      session = runtime.store.create(agent, workspace)
+    }
     console.log(`sessao ${session.id} com ${session.agent} em ${session.workspace}. Linha vazia encerra.`)
     for (;;) {
-      const text = (await rl.question('\nvoce> ')).trim()
+      const text = pending ?? (await rl.question('\nvoce> ')).trim()
+      pending = undefined
       if (text === '') break
       const result = await runtime.run({
         sessionId: session.id,
@@ -145,6 +153,12 @@ function printEvent(e: RunEvent): void {
       return
     case 'escalation':
       console.log(`\n[escalada] ${e.from} para ${e.to}: ${e.reason}`)
+      return
+    case 'compaction':
+      console.log(`\n[compactacao ${e.mode}] ${e.before} para ${e.after} tokens estimados`)
+      return
+    case 'skills_loaded':
+      console.log(`\n[skills] ${e.names.join(', ')}`)
       return
     case 'run_finished':
       if (e.error) console.log(`\n[erro] ${e.error}`)
