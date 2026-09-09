@@ -49,6 +49,7 @@ export interface RunRequest {
   signal?: AbortSignal
   policyOverride?: Policy
   budgetOverride?: { runUsd?: number; sessionUsd?: number }
+  autoApprove?: boolean
 }
 
 export const draftPolicy: Policy = { read: 'allow', write: 'deny', exec: 'deny' }
@@ -273,6 +274,10 @@ export class Runtime {
   }
 
   private async ask(req: RunRequest, runId: string, call: ToolCallPart, def: ToolDefinition): Promise<ApprovalDecision> {
+    if (req.autoApprove) {
+      this.store.recordToolEvent({ sessionId: req.sessionId, runId, name: def.name, args: call.args, decision: 'auto_approved' })
+      return 'allow'
+    }
     const { info, promise } = this.approvals.request(
       { sessionId: req.sessionId, runId, tool: def.name, args: call.args, risk: def.risk },
       this.config.approvalTimeoutMs,

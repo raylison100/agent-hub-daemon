@@ -7,6 +7,7 @@ import type { ReportGroup, RunEvent } from '@agent-hub/core'
 import type { PendingApproval } from './approvals.js'
 import { AutomationRunner } from './automation.js'
 import { ensureAccountToken, ensureDeviceId, ensureToken, exampleConfig, loadConfig } from './config.js'
+import { serveMcp } from './mcp-server.js'
 import { Runtime } from './runtime.js'
 import { Scheduler } from './schedules.js'
 import { startServer } from './server.js'
@@ -77,6 +78,24 @@ program
     console.log(`relay: ${config.relayUrl}`)
     console.log(`token de conta: ${ensureAccountToken(config.home)}`)
     console.log(`dispositivo: ${ensureDeviceId(config.home)} (${config.deviceName})`)
+  })
+
+program
+  .command('mcp')
+  .description('Expoe o daemon como servidor MCP por stdio, para o Claude Code, o Claude Desktop ou outro cliente MCP')
+  .option('--url <url>', 'URL do daemon ou do relay; padrao: daemon local do config')
+  .option('--relay-account <token>', 'token de conta, quando pelo relay')
+  .option('--device <id>', 'id do dispositivo, quando pelo relay')
+  .option('--timeout <ms>', 'tempo maximo de um run', '900000')
+  .action(async (opts: { url?: string; relayAccount?: string; device?: string; timeout: string }) => {
+    const config = loadConfig()
+    await serveMcp({
+      url: opts.url ?? `ws://${config.host}:${config.port}/ws`,
+      token: ensureToken(config.home),
+      accountToken: opts.relayAccount,
+      deviceId: opts.device,
+      runTimeoutMs: Number(opts.timeout),
+    })
   })
 
 program
@@ -203,6 +222,15 @@ function printEvent(e: RunEvent): void {
       return
     case 'skills_loaded':
       console.log(`\n[skills] ${e.names.join(', ')}`)
+      return
+    case 'delegation':
+      console.log(e.phase === 'start' ? `\n[delegando a ${e.agent}] ${e.task.slice(0, 120)}` : `\n[${e.agent} terminou] ${e.stop}, ${(e.costUsd ?? 0).toFixed(4)} USD`)
+      return
+    case 'hook':
+      console.log(`\n[hook ${e.event}${e.tool ? ` ${e.tool}` : ''}] ${e.allow ? 'permitiu' : `negou: ${e.reason ?? ''}`}`)
+      return
+    case 'phase':
+      console.log(`\n[fase ${e.index + 1}: ${e.name}] ferramentas: ${e.tools.join(', ')}`)
       return
     case 'run_finished':
       if (e.error) console.log(`\n[erro] ${e.error}`)

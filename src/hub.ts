@@ -1,6 +1,6 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { protocolVersion, type ClientFrame, type ServerFrame } from '@agent-hub/core'
-import type { Runtime } from './runtime.js'
+import { draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
 
@@ -92,8 +92,13 @@ export class ConnectionHub {
         send({ type: 'sync', session_id: frame.session_id, events: runtime.store.eventsSince(frame.session_id, frame.since_seq) })
         return
       case 'run.start':
-        this.startRun(frame.session_id, frame.text, send)
+        this.startRun(frame.session_id, frame.text, send, frame.mode)
         return
+      case 'cost.export': {
+        const out = runtime.ledger.exportCsv({ since: frame.since, until: frame.until })
+        send({ type: 'cost.export', csv: out.csv, rows: out.rows })
+        return
+      }
       case 'run.cancel':
         this.runs.get(frame.run_id)?.abort()
         return
@@ -145,7 +150,7 @@ export class ConnectionHub {
     }
   }
 
-  private startRun(sessionId: string, text: string, send: (f: ServerFrame) => void): void {
+  private startRun(sessionId: string, text: string, send: (f: ServerFrame) => void, mode: 'normal' | 'draft' | 'auto_approve' = 'normal'): void {
     const runtime = this.runtime
     const runId = randomUUID()
     const controller = new AbortController()
@@ -157,6 +162,8 @@ export class ConnectionHub {
         text,
         runId,
         signal: controller.signal,
+        policyOverride: mode === 'draft' ? draftPolicy : undefined,
+        autoApprove: mode === 'auto_approve',
         emit: (event) => {
           const seq = runtime.store.appendEvent(sessionId, runId, event)
           this.broadcast({ type: 'event', session_id: sessionId, run_id: runId, seq, event })
