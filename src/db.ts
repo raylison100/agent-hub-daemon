@@ -94,5 +94,18 @@ function migrate(db: DatabaseType): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS triggers (
+      id TEXT PRIMARY KEY,
+      spec_json TEXT NOT NULL,
+      source TEXT NOT NULL,
+      last_fired_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS trigger_deliveries (
+      trigger_id TEXT NOT NULL,
+      delivery_key TEXT NOT NULL,
+      received_at INTEGER NOT NULL,
+      session_id TEXT,
+      PRIMARY KEY (trigger_id, delivery_key)
+    );
   `)
 }

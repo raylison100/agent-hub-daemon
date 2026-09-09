@@ -32,9 +32,11 @@ import {
 } from '@agent-hub/core'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import { ApprovalQueue, type ApprovalDecision, type PendingApproval } from './approvals.js'
+import type { AutomationRunner } from './automation.js'
 import type { DaemonConfig } from './config.js'
 import { openDb } from './db.js'
 import { SessionStore } from './store.js'
+import { Webhooks } from './webhooks.js'
 
 export interface RunRequest {
   sessionId: string
@@ -61,6 +63,8 @@ export class Runtime {
   readonly mcp = new McpBridge()
   readonly approvals = new ApprovalQueue()
   private readonly activeBudgets = new Map<string, Budget>()
+  readonly hooks = new Webhooks([], process.env, (m) => console.error(m))
+  automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
   redactor!: Redactor
@@ -74,12 +78,13 @@ export class Runtime {
     this.reload()
   }
 
-  /** Recarrega perfis, politicas, skills, roteamento, segredos e precos do repositorio `agents`. */
+  /** Recarrega perfis, politicas, skills, roteamento, segredos, webhooks e precos do repositorio `agents`. */
   reload(): void {
     if (!existsSync(this.config.agentsDir)) throw new Error(`diretorio de agentes nao existe: ${this.config.agentsDir}`)
     this.repo = loadAgentsRepo(this.config.agentsDir)
     this.pricing = Pricing.fromFile(join(this.config.agentsDir, 'pricing.json'))
     this.redactor = new Redactor(this.repo.secrets)
+    this.hooks.replace(this.repo.webhooks)
   }
 
   agents(): AgentSummary[] {

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -13,6 +13,7 @@ export interface DaemonConfig {
   workspaces: string[]
   approvalTimeoutMs: number
   deviceName: string
+  relayUrl?: string
 }
 
 interface RawConfig {
@@ -23,6 +24,7 @@ interface RawConfig {
   workspaces?: string[]
   approval_timeout_ms?: number
   device_name?: string
+  relay_url?: string
 }
 
 export function configHome(): string {
@@ -44,17 +46,31 @@ export function loadConfig(): DaemonConfig {
     workspaces: (raw.workspaces ?? []).map((w) => resolve(w)),
     approvalTimeoutMs: raw.approval_timeout_ms ?? 10 * 60 * 1000,
     deviceName: raw.device_name ?? 'este-computador',
+    relayUrl: process.env.AGENT_HUB_RELAY_URL ?? raw.relay_url,
   }
+}
+
+/** Token de conta usado no relay para agrupar dispositivos e clientes da mesma pessoa. */
+export function ensureAccountToken(home: string): string {
+  return ensureSecretFile(join(home, 'account_token'), () => randomBytes(32).toString('hex'))
+}
+
+/** Identificador estavel deste daemon no relay. */
+export function ensureDeviceId(home: string): string {
+  return ensureSecretFile(join(home, 'device_id'), () => randomUUID())
+}
+
+function ensureSecretFile(file: string, generate: () => string): string {
+  if (existsSync(file)) return readFileSync(file, 'utf8').trim()
+  const value = generate()
+  writeFileSync(file, value, { mode: 0o600 })
+  chmodSync(file, 0o600)
+  return value
 }
 
 /** Garante o token local de acesso ao daemon, gravado com permissao restrita ao usuario. */
 export function ensureToken(home: string): string {
-  const file = join(home, 'token')
-  if (existsSync(file)) return readFileSync(file, 'utf8').trim()
-  const token = randomBytes(32).toString('hex')
-  writeFileSync(file, token, { mode: 0o600 })
-  chmodSync(file, 0o600)
-  return token
+  return ensureSecretFile(join(home, 'token'), () => randomBytes(32).toString('hex'))
 }
 
 export function exampleConfig(): string {
@@ -66,6 +82,7 @@ export function exampleConfig(): string {
     'workspaces = ["/home/usuario/Projects/meu-projeto"]',
     'approval_timeout_ms = 600000',
     'device_name = "pc-casa"',
+    '# relay_url = "wss://relay.exemplo.com"',
     '',
   ].join('\n')
 }

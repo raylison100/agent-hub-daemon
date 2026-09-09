@@ -1,10 +1,10 @@
 import type { Database } from 'better-sqlite3'
 import { Cron } from 'croner'
-import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ScheduleSchema, type AutomationRun, type ScheduleParsed, type ScheduleSpec, type ScheduleStatus, type ServerFrame } from '@agent-hub/core'
-import { draftPolicy, type Runtime } from './runtime.js'
+import { ScheduleSchema, type ScheduleParsed, type ScheduleSpec, type ScheduleStatus, type ServerFrame } from '@agent-hub/core'
+import type { AutomationRunner } from './automation.js'
+import type { Runtime } from './runtime.js'
 
 interface ScheduleRow {
   id: string
@@ -14,52 +14,33 @@ interface ScheduleRow {
   next_run_at: number | null
 }
 
-interface AutomationRunRow {
-  id: string
-  kind: 'schedule' | 'trigger'
-  automation_id: string
-  session_id: string
-  run_id: string
-  started_at: number
-  finished_at: number | null
-  status: string
-  cost_usd: number
-}
-
 const tickMs = 15_000
-const pausedKey = 'automation.paused'
 
-/** Agendamentos por cron ou instante unico, com orcamento obrigatorio, modo rascunho e interruptor geral. */
+/** Agendamentos por cron ou instante unico. A execucao em si passa pelo AutomationRunner. */
 export class Scheduler {
   private timer: NodeJS.Timeout | null = null
-  private readonly running = new Set<string>()
-  private readonly queued = new Set<string>()
-  paused: boolean
 
   constructor(
     private readonly runtime: Runtime,
     private readonly db: Database,
+    private readonly automation: AutomationRunner,
     private readonly broadcast: (frame: ServerFrame) => void,
-  ) {
-    this.paused = runtime.store.setting(pausedKey) === '1'
+  ) {}
+
+  get paused(): boolean {
+    return this.automation.paused
   }
 
   start(): void {
     this.loadFiles()
     this.recoverMissed()
-    this.timer = setInterval(() => void this.tick(), tickMs)
-    void this.tick()
+    this.timer = setInterval(() => this.tick(), tickMs)
+    this.tick()
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
-  }
-
-  setPaused(paused: boolean): void {
-    this.paused = paused
-    this.runtime.store.setSetting(pausedKey, paused ? '1' : '0')
-    this.broadcast({ type: 'automation.state', paused })
   }
 
   list(): ScheduleStatus[] {
@@ -100,15 +81,6 @@ export class Scheduler {
     await this.fire(JSON.parse(row.spec_json) as ScheduleParsed, true)
   }
 
-  runs(automationId?: string, limit = 50): AutomationRun[] {
-    const rows = (
-      automationId
-        ? this.db.prepare('SELECT * FROM automation_runs WHERE automation_id = ? ORDER BY started_at DESC LIMIT ?').all(automationId, limit)
-        : this.db.prepare('SELECT * FROM automation_runs ORDER BY started_at DESC LIMIT ?').all(limit)
-    ) as AutomationRunRow[]
-    return rows.map(toAutomationRun)
-  }
-
   private loadFiles(): void {
     const dir = join(this.runtime.config.agentsDir, 'schedules')
     if (!existsSync(dir)) return
@@ -131,12 +103,10 @@ export class Scheduler {
     }
   }
 
-  private async tick(): Promise<void> {
-    if (this.paused) return
+  private tick(): void {
+    if (this.automation.paused) return
     const now = Date.now()
-    const due = this.db
-      .prepare('SELECT * FROM schedules WHERE next_run_at IS NOT NULL AND next_run_at <= ?')
-      .all(now) as ScheduleRow[]
+    const due = this.db.prepare('SELECT * FROM schedules WHERE next_run_at IS NOT NULL AND next_run_at <= ?').all(now) as ScheduleRow[]
     for (const row of due) {
       const spec = JSON.parse(row.spec_json) as ScheduleParsed
       this.db.prepare('UPDATE schedules SET next_run_at = ? WHERE id = ?').run(spec.enabled ? nextRun(spec, now) : null, spec.id)
@@ -144,71 +114,9 @@ export class Scheduler {
     }
   }
 
-  private async fire(spec: ScheduleParsed, manual: boolean): Promise<void> {
-    if (this.running.has(spec.id)) {
-      if (spec.overlap === 'queue') this.queued.add(spec.id)
-      return
-    }
-    if (!manual && this.paused) return
-    const spentToday = this.spentToday(spec.id)
-    if (spentToday >= spec.budget.day_usd) {
-      this.broadcast({ type: 'automation.error', kind: 'schedule', id: spec.id, message: `orcamento diario esgotado: ${spentToday.toFixed(4)} USD` })
-      return
-    }
-    this.running.add(spec.id)
-    const runId = randomUUID()
-    const automationRunId = randomUUID()
-    try {
-      const session = this.runtime.store.create(spec.agent, spec.workspace, `[agendamento] ${spec.id}`, 'schedule')
-      this.db
-        .prepare('INSERT INTO automation_runs (id, kind, automation_id, session_id, run_id, started_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(automationRunId, 'schedule', spec.id, session.id, runId, Date.now(), 'running')
-      this.db.prepare('UPDATE schedules SET last_run_at = ? WHERE id = ?').run(Date.now(), spec.id)
-      this.broadcast({ type: 'automation.started', kind: 'schedule', id: spec.id, session_id: session.id, run_id: runId })
-      const result = await this.runtime.run({
-        sessionId: session.id,
-        text: spec.prompt,
-        runId,
-        policyOverride: spec.mode === 'draft' ? draftPolicy : undefined,
-        budgetOverride: { runUsd: spec.budget.run_usd },
-        emit: (event) => {
-          const seq = this.runtime.store.appendEvent(session.id, runId, event)
-          this.broadcast({ type: 'event', session_id: session.id, run_id: runId, seq, event })
-        },
-        onApproval: (info) =>
-          this.broadcast({
-            type: 'approval.required',
-            approval_id: info.id,
-            session_id: info.sessionId,
-            run_id: info.runId,
-            tool: info.tool,
-            args: info.args,
-            risk: info.risk,
-            expires_at: info.expiresAt,
-          }),
-      })
-      this.db
-        .prepare('UPDATE automation_runs SET finished_at = ?, status = ?, cost_usd = ? WHERE id = ?')
-        .run(Date.now(), result.stop, result.costUsd, automationRunId)
-      this.broadcast({ type: 'automation.finished', kind: 'schedule', id: spec.id, session_id: session.id, run_id: runId, stop: result.stop, cost_usd: result.costUsd })
-      const updated = this.runtime.store.get(session.id)
-      if (updated) this.broadcast({ type: 'session.updated', session: updated })
-    } catch (err) {
-      this.db.prepare('UPDATE automation_runs SET finished_at = ?, status = ? WHERE id = ?').run(Date.now(), 'error', automationRunId)
-      this.broadcast({ type: 'automation.error', kind: 'schedule', id: spec.id, message: describe(err) })
-    } finally {
-      this.running.delete(spec.id)
-      if (this.queued.delete(spec.id)) void this.fire(spec, false)
-    }
-  }
-
-  private spentToday(id: string): number {
-    const start = new Date()
-    start.setHours(0, 0, 0, 0)
-    const row = this.db
-      .prepare('SELECT COALESCE(SUM(cost_usd), 0) AS total FROM automation_runs WHERE automation_id = ? AND started_at >= ?')
-      .get(id, start.getTime()) as { total: number }
-    return row.total
+  private fire(spec: ScheduleParsed, manual: boolean): Promise<void> {
+    this.db.prepare('UPDATE schedules SET last_run_at = ? WHERE id = ?').run(Date.now(), spec.id)
+    return this.automation.execute({ ...spec, kind: 'schedule' }, { manual, title: `[agendamento] ${spec.id}` })
   }
 
   private status(row: ScheduleRow): ScheduleStatus {
@@ -218,8 +126,8 @@ export class Scheduler {
       source: row.source,
       lastRunAt: row.last_run_at,
       nextRunAt: row.next_run_at,
-      running: this.running.has(row.id),
-      todayUsd: this.spentToday(row.id),
+      running: this.automation.isRunning('schedule', row.id),
+      todayUsd: this.automation.spentToday(row.id),
     }
   }
 }
@@ -230,20 +138,6 @@ export function nextRun(spec: Pick<ScheduleParsed, 'cron' | 'at' | 'timezone'>, 
   if (!spec.cron) return null
   const next = new Cron(spec.cron, { timezone: spec.timezone }).nextRun(new Date(from))
   return next ? next.getTime() : null
-}
-
-function toAutomationRun(r: AutomationRunRow): AutomationRun {
-  return {
-    id: r.id,
-    kind: r.kind,
-    automationId: r.automation_id,
-    sessionId: r.session_id,
-    runId: r.run_id,
-    startedAt: r.started_at,
-    finishedAt: r.finished_at,
-    status: r.status,
-    costUsd: r.cost_usd,
-  }
 }
 
 function describe(err: unknown): string {

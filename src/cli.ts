@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import type { ReportGroup, RunEvent } from '@agent-hub/core'
 import type { PendingApproval } from './approvals.js'
-import { ensureToken, exampleConfig, loadConfig } from './config.js'
+import { AutomationRunner } from './automation.js'
+import { ensureAccountToken, ensureDeviceId, ensureToken, exampleConfig, loadConfig } from './config.js'
 import { Runtime } from './runtime.js'
 import { Scheduler } from './schedules.js'
 import { startServer } from './server.js'
@@ -35,8 +36,10 @@ program
     const runtime = new Runtime(config)
     reportErrors(runtime)
     const token = ensureToken(config.home)
-    const server = await startServer(runtime, token)
+    const relay = config.relayUrl ? { accountToken: ensureAccountToken(config.home), deviceId: ensureDeviceId(config.home) } : undefined
+    const server = await startServer(runtime, token, relay)
     console.log(`daemon em ws://${config.host}:${config.port}/ws (dispositivo ${config.deviceName})`)
+    if (config.relayUrl) console.log(`relay configurado: ${config.relayUrl}`)
     console.log(`agentes: ${runtime.agents().map((a) => a.name).join(', ') || 'nenhum'}`)
     const stop = async () => {
       await server.close()
@@ -62,11 +65,37 @@ program
 
 program
   .command('pair')
-  .description('Mostra o token local para conectar um cliente')
+  .description('Mostra os dados para conectar um cliente, local ou pelo relay')
   .action(() => {
     const config = loadConfig()
-    console.log(`url: ws://${config.host}:${config.port}/ws`)
-    console.log(`token: ${ensureToken(config.home)}`)
+    console.log(`url local: ws://${config.host}:${config.port}/ws`)
+    console.log(`token do daemon: ${ensureToken(config.home)}`)
+    if (!config.relayUrl) {
+      console.log('relay: nao configurado (relay_url no config.toml)')
+      return
+    }
+    console.log(`relay: ${config.relayUrl}`)
+    console.log(`token de conta: ${ensureAccountToken(config.home)}`)
+    console.log(`dispositivo: ${ensureDeviceId(config.home)} (${config.deviceName})`)
+  })
+
+program
+  .command('triggers')
+  .description('Lista gatilhos externos cadastrados')
+  .action(() => {
+    const runtime = new Runtime(loadConfig())
+    const rows = runtime.db.prepare('SELECT id, spec_json, source, last_fired_at FROM triggers ORDER BY id').all() as {
+      id: string
+      spec_json: string
+      source: string
+      last_fired_at: number | null
+    }[]
+    if (rows.length === 0) console.log('nenhum gatilho')
+    for (const r of rows) {
+      const spec = JSON.parse(r.spec_json) as { source: string; agent: string; mode: string; enabled: boolean }
+      const last = r.last_fired_at ? new Date(r.last_fired_at).toISOString() : 'nunca'
+      console.log(`${r.id}\t${spec.enabled ? 'on' : 'off'}\t${spec.source}\t${spec.agent}\t${spec.mode}\t${r.source}\tultimo ${last}`)
+    }
   })
 
 program
@@ -83,7 +112,8 @@ program
   .description('Lista agendamentos e o estado do interruptor geral')
   .action(() => {
     const runtime = new Runtime(loadConfig())
-    const scheduler = new Scheduler(runtime, runtime.db, () => undefined)
+    const automation = new AutomationRunner(runtime, runtime.db, () => undefined)
+    const scheduler = new Scheduler(runtime, runtime.db, automation, () => undefined)
     console.log(`automacao ${scheduler.paused ? 'pausada' : 'ativa'}`)
     for (const s of scheduler.list()) {
       const next = s.nextRunAt ? new Date(s.nextRunAt).toISOString() : 'nunca'
