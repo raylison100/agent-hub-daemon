@@ -125,6 +125,38 @@ program
   })
 
 program
+  .command('workflows')
+  .description('Lista workflows declarativos com custo maximo, ou roda um deles')
+  .argument('[nome]', 'nome do workflow para rodar')
+  .option('-w, --workspace <dir>', 'workspace do run')
+  .option('-i, --input <k=v...>', 'entradas do workflow')
+  .action(async (nome: string | undefined, opts: { workspace?: string; input?: string[] }) => {
+    const runtime = new Runtime(loadConfig())
+    reportErrors(runtime)
+    const { WorkflowEngine } = await import('./workflows.js')
+    const engine = new WorkflowEngine(runtime, (f) => {
+      if (f.type === 'workflow.step') console.log(`[${f.step}] ${f.status}${f.detail ? ` ${f.detail}` : ''}${f.cost_usd !== undefined ? ` ${f.cost_usd.toFixed(4)} USD` : ''}`)
+      if (f.type === 'event') printEvent(f.event)
+      if (f.type === 'approval.required') void askInTerminalPlain(runtime, f.approval_id, f.tool, f.args)
+    })
+    if (!nome) {
+      for (const w of engine.list()) {
+        console.log(`${w.name}\t${w.mode}\tentradas ${w.inputs.join(',') || '-'}\tcusto maximo ${w.maxCostUsd === null ? 'indefinido' : w.maxCostUsd.toFixed(4)} USD\t${w.description}`)
+      }
+      return
+    }
+    if (!opts.workspace) throw new Error('informe --workspace')
+    const inputs: Record<string, string> = {}
+    for (const pair of opts.input ?? []) {
+      const i = pair.indexOf('=')
+      if (i > 0) inputs[pair.slice(0, i)] = pair.slice(i + 1)
+    }
+    const outcome = await engine.run({ name: nome, inputs, workspace: opts.workspace })
+    console.log(`\n[${outcome.status}] custo ${outcome.costUsd.toFixed(4)} USD${outcome.error ? `: ${outcome.error}` : ''}`)
+    await runtime.mcp.close()
+  })
+
+program
   .command('triggers')
   .description('Lista gatilhos externos cadastrados')
   .action(() => {
@@ -269,6 +301,13 @@ function printEvent(e: RunEvent): void {
 async function askInTerminal(runtime: Runtime, rl: ReturnType<typeof createInterface>, info: PendingApproval): Promise<void> {
   const answer = (await rl.question(`\naprovar ${info.tool} ${JSON.stringify(info.args)}? [s/N] `)).trim().toLowerCase()
   runtime.approvals.respond(info.id, answer === 's' ? 'allow' : 'deny')
+}
+
+async function askInTerminalPlain(runtime: Runtime, id: string, tool: string, args: unknown): Promise<void> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const answer = (await rl.question(`\naprovar ${tool} ${JSON.stringify(args)}? [s/N] `)).trim().toLowerCase()
+  rl.close()
+  runtime.approvals.respond(id, answer === 's' ? 'allow' : 'deny')
 }
 
 function reportErrors(runtime: Runtime): void {

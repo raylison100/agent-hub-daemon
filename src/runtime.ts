@@ -273,9 +273,30 @@ export class Runtime {
     }
   }
 
+  /** Run isolado de um perfil (sem historico) dentro de uma sessao, usado por workflows. Devolve o texto final e o custo. */
+  async runIsolated(
+    profile: AgentProfile,
+    sessionId: string,
+    parentRunId: string,
+    text: string,
+    opts: { policyOverride?: Policy; emit: (event: RunEvent) => void; onApproval: (info: PendingApproval) => void },
+  ): Promise<{ text: string; costUsd: number; stop: string; error?: string }> {
+    const session = this.store.get(sessionId)
+    if (!session) throw new Error(`sessao nao encontrada: ${sessionId}`)
+    const req: RunRequest = { sessionId, text, emit: opts.emit, onApproval: opts.onApproval, policyOverride: opts.policyOverride }
+    const result = await this.delegate(req, session.workspace, parentRunId, profile.name, text, profile)
+    return { text: result.text, costUsd: result.costUsd, stop: result.stop, error: result.error }
+  }
+
+  /** Pedido de aprovacao fora de um runner, para etapas de ferramenta de workflow. */
+  requestApproval(sessionId: string, runId: string, def: ToolDefinition, args: Record<string, unknown>, onApproval: (info: PendingApproval) => void): Promise<ApprovalDecision> {
+    const req: RunRequest = { sessionId, text: '', emit: () => undefined, onApproval, onApprovalPush: true }
+    return this.ask(req, runId, { type: 'tool_call', id: randomUUID(), name: def.name, args }, def)
+  }
+
   /** Run filho com outro perfil, sem historico da sessao, custo lancado na mesma sessao sob o run pai. */
-  private async delegate(req: RunRequest, workspace: string, parentRunId: string, agent: string, task: string): Promise<DelegationResult> {
-    const child = this.profile(agent)
+  private async delegate(req: RunRequest, workspace: string, parentRunId: string, agent: string, task: string, override?: AgentProfile): Promise<DelegationResult & { error?: string }> {
+    const child = override ?? this.profile(agent)
     await this.ensureMcp(child)
     const adapter = createAdapter(child)
     const runId = randomUUID()
@@ -304,8 +325,9 @@ export class Runtime {
     })
     try {
       const result = await runner.run({ runId, sessionId: req.sessionId, history: [], userText: task, parentRunId })
+      this.store.appendMessages(req.sessionId, runId, result.appended)
       const last = [...result.appended].reverse().find((m) => m.role === 'assistant')
-      return { text: (last ? messageText(last) : text.join('')) || text.join(''), costUsd: result.costUsd, runId, stop: result.stop }
+      return { text: (last ? messageText(last) : text.join('')) || text.join(''), costUsd: result.costUsd, runId, stop: result.stop, error: result.error }
     } finally {
       this.activeBudgets.delete(runId)
     }

@@ -3,6 +3,7 @@ import { protocolVersion, type ClientFrame, type ServerFrame } from '@agent-hub/
 import { draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
+import { WorkflowEngine } from './workflows.js'
 
 export interface Conn {
   send(frame: ServerFrame): void
@@ -16,11 +17,14 @@ export class ConnectionHub {
   private readonly runs = new Map<string, AbortController>()
   scheduler!: Scheduler
   triggers!: Triggers
+  readonly workflows: WorkflowEngine
 
   constructor(
     private readonly runtime: Runtime,
     private readonly token: string,
-  ) {}
+  ) {
+    this.workflows = new WorkflowEngine(runtime, (f) => this.broadcast(f))
+  }
 
   attach(conn: Conn): void {
     this.conns.add(conn)
@@ -183,6 +187,12 @@ export class ConnectionHub {
         return
       case 'push.test':
         await runtime.push.send({ title: 'Agent Hub', body: `Notificacoes ativas em ${runtime.config.deviceName}`, tag: 'teste' })
+        return
+      case 'workflow.list':
+        send({ type: 'workflow.list', workflows: this.workflows.list() })
+        return
+      case 'workflow.run':
+        void this.workflows.run({ name: frame.name, inputs: frame.inputs, workspace: frame.workspace }).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
         return
     }
   }
