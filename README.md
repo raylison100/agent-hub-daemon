@@ -100,8 +100,39 @@ src/
   webhooks.ts   webhooks de saida em Standard Webhooks
   relay.ts      conexao de saida com o relay
   server.ts     Fastify + WebSocket, monta hub, agendador, gatilhos e relay
-  cli.ts        init, start, status, pair, agents, schedules, triggers, cost, chat
+  mcp-server.ts servidor MCP por stdio sobre o cliente do protocolo
+  cli.ts        init, start, status, pair, agents, schedules, triggers, cost, chat, mcp
 ```
+
+## Servidor MCP para outros clientes
+
+`agent-hub-daemon mcp` expoe o daemon por stdio com as ferramentas
+`list_agents`, `list_sessions`, `run_agent` e `cost_report`. Assim o Claude
+Code ou o Claude Desktop disparam seus agentes nesta maquina. No Claude
+Code:
+
+```json
+{
+  "mcpServers": {
+    "agent-hub": {
+      "command": "node",
+      "args": ["/caminho/agent-hub/daemon/dist/cli.js", "mcp"]
+    }
+  }
+}
+```
+
+`run_agent` roda em modo `draft` por padrao (sem escrita nem execucao).
+`normal` segue a politica do perfil e aprovacoes pendentes expiram em
+`approval_timeout_ms`; `auto_approve` libera tudo, exceto padroes
+destrutivos, que continuam pedindo aprovacao e expiram.
+
+## Fases por perfil
+
+Um perfil com `phases` expoe ao modelo apenas as ferramentas da fase atual
+e avanca quando a ferramenta de sinal (`plan`, `done`) e chamada ou quando
+`max_steps` da fase termina. Ao acabar a ultima fase, o run termina. Ver
+`../docs/11-determinismo.md`.
 
 ## Delegacao
 
