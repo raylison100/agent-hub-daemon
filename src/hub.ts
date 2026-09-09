@@ -96,8 +96,19 @@ export class ConnectionHub {
         send({ type: 'sync', session_id: frame.session_id, events: runtime.store.eventsSince(frame.session_id, frame.since_seq) })
         return
       case 'run.start':
-        this.startRun(frame.session_id, frame.text, send, frame.mode)
+        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning)
         return
+      case 'cost.status': {
+        const s = runtime.costStatus()
+        send({
+          type: 'cost.status',
+          today_usd: s.todayUsd,
+          month_usd: s.monthUsd,
+          global_month_limit_usd: s.globalMonthLimit,
+          agents: Object.fromEntries(Object.entries(s.agents).map(([k, v]) => [k, { today_usd: v.todayUsd, day_limit_usd: v.dayLimit }])),
+        })
+        return
+      }
       case 'cost.export': {
         const out = runtime.ledger.exportCsv({ since: frame.since, until: frame.until })
         send({ type: 'cost.export', csv: out.csv, rows: out.rows })
@@ -203,7 +214,13 @@ export class ConnectionHub {
     this.runtime.registry.registerAll(await this.runtime.mcp.connect(name, config))
   }
 
-  private startRun(sessionId: string, text: string, send: (f: ServerFrame) => void, mode: 'normal' | 'draft' | 'auto_approve' = 'normal'): void {
+  private startRun(
+    sessionId: string,
+    text: string,
+    send: (f: ServerFrame) => void,
+    mode: 'normal' | 'draft' | 'auto_approve' = 'normal',
+    reasoning?: 'low' | 'medium' | 'high' | 'max',
+  ): void {
     const runtime = this.runtime
     const runId = randomUUID()
     const controller = new AbortController()
@@ -217,6 +234,7 @@ export class ConnectionHub {
         signal: controller.signal,
         policyOverride: mode === 'draft' ? draftPolicy : undefined,
         autoApprove: mode === 'auto_approve',
+        reasoningOverride: reasoning,
         emit: (event) => {
           const seq = runtime.store.appendEvent(sessionId, runId, event)
           this.broadcast({ type: 'event', session_id: sessionId, run_id: runId, seq, event })

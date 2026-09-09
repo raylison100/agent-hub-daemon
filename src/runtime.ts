@@ -58,6 +58,7 @@ export interface RunRequest {
   budgetOverride?: { runUsd?: number; sessionUsd?: number }
   autoApprove?: boolean
   onApprovalPush?: boolean
+  reasoningOverride?: 'low' | 'medium' | 'high' | 'max'
 }
 
 export const draftPolicy: Policy = { read: 'allow', write: 'deny', exec: 'deny' }
@@ -114,8 +115,31 @@ export class Runtime {
       model: p.model,
       reasoning: p.reasoning,
       tools: [...p.tools.native, ...p.tools.mcp.map((s) => `mcp:${s}`)],
-      budget: p.budget,
+      budget: { ...p.budget, day_usd: this.repo.budgets.agents[p.name]?.day_usd },
+      context_window: p.context.window,
+      delegates: p.delegates,
     }))
+  }
+
+  /** Gasto de hoje e do mes, por agente e global, para o painel de limites da interface. */
+  costStatus(): { todayUsd: number; monthUsd: number; globalMonthLimit: number | null; agents: Record<string, { todayUsd: number; dayLimit: number | null }> } {
+    const day = new Date()
+    day.setHours(0, 0, 0, 0)
+    const month = new Date(day)
+    month.setDate(1)
+    const agents: Record<string, { todayUsd: number; dayLimit: number | null }> = {}
+    for (const row of this.ledger.report('agent', { since: day.getTime() })) {
+      agents[row.key] = { todayUsd: row.costUsd, dayLimit: this.repo.budgets.agents[row.key]?.day_usd ?? null }
+    }
+    for (const name of this.repo.profiles.keys()) {
+      if (!agents[name]) agents[name] = { todayUsd: 0, dayLimit: this.repo.budgets.agents[name]?.day_usd ?? null }
+    }
+    return {
+      todayUsd: this.ledger.totals({ since: day.getTime() }).costUsd,
+      monthUsd: this.ledger.totals({ since: month.getTime() }).costUsd,
+      globalMonthLimit: this.repo.budgets.global_month_usd ?? null,
+      agents,
+    }
   }
 
   profile(name: string): AgentProfile {
@@ -229,7 +253,8 @@ export class Runtime {
   async run(req: RunRequest): Promise<RunResult> {
     const session = this.store.get(req.sessionId)
     if (!session) throw new Error(`sessao nao encontrada: ${req.sessionId}`)
-    const profile = this.profile(session.agent)
+    const base = this.profile(session.agent)
+    const profile = req.reasoningOverride ? { ...base, reasoning: req.reasoningOverride } : base
     const runId = req.runId ?? randomUUID()
     const result = await this.runWith(profile, session.workspace, req, runId)
     if (result.stop !== 'tool_call_invalid' || !profile.fallback_agent) return result
