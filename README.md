@@ -92,14 +92,34 @@ src/
   db.ts         SQLite e migracoes (sessoes, mensagens, eventos, aprovacoes)
   store.ts      SessionStore com seq por sessao para catch-up
   approvals.ts  fila de aprovacao com expiracao
-  runtime.ts    carrega agents/, monta runner, roteia, resume para compactacao, escala para fallback_agent
-  schedules.ts  agendamentos por cron, orcamento diario, modo rascunho, interruptor geral
-  server.ts     Fastify + WebSocket, broadcast de eventos
-  cli.ts        init, start, status, pair, agents, schedules, cost, chat
+  runtime.ts    carrega agents/, monta runner, roteia, resume, delega, escala para fallback_agent
+  hub.ts        trata os quadros do protocolo para sockets locais e canais do relay
+  automation.ts execucao comum de agendamentos e gatilhos: orcamento diario, rascunho, interruptor
+  schedules.ts  agendamentos por cron
+  triggers.ts   gatilhos externos com assinatura por fonte, filtro e dedupe
+  webhooks.ts   webhooks de saida em Standard Webhooks
+  relay.ts      conexao de saida com o relay
+  server.ts     Fastify + WebSocket, monta hub, agendador, gatilhos e relay
+  cli.ts        init, start, status, pair, agents, schedules, triggers, cost, chat
 ```
+
+## Delegacao
+
+Um perfil com `delegates: [outro]` ganha a ferramenta `delegate`. O run
+filho roda com o outro perfil, sem o historico da sessao, na mesma sessao
+do ledger e com `parent_run_id`. O pai recebe so a resposta final e o
+custo do filho entra no custo do run pai.
+
+## Acesso remoto
+
+Com `relay_url` no config, o daemon abre conexao de saida para o relay e
+passa a receber clientes e webhooks por la. `agent-hub-daemon pair` mostra
+o token de conta e o id do dispositivo. Gatilhos ficam em
+`agents/triggers/*.json` ou pela interface; o relay os recebe em
+`POST /hooks/<device_id>/<trigger_id>`.
 
 ## Pendente
 
 - MCP: OAuth para servidores HTTP, recursos e prompts. Hoje stdio e HTTP
   com cabecalhos fixos, apenas tools.
-- Gatilhos externos e webhooks de saida (fase 3, dependem do relay).
+- Plugins por URL git (hoje apenas caminho local).

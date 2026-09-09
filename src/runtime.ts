@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import {
   AgentRunner,
+  HookRunner,
   Ledger,
   McpBridge,
   Pricing,
@@ -21,6 +22,7 @@ import {
   type AgentsRepo,
   type Budget,
   type BudgetScope,
+  type DelegationResult,
   type Message,
   type Policy,
   type RouteResult,
@@ -68,6 +70,7 @@ export class Runtime {
   repo!: AgentsRepo
   pricing!: Pricing
   redactor!: Redactor
+  hookRunner!: HookRunner
 
   constructor(readonly config: DaemonConfig) {
     const db = openDb(config.dbPath)
@@ -85,6 +88,7 @@ export class Runtime {
     this.pricing = Pricing.fromFile(join(this.config.agentsDir, 'pricing.json'))
     this.redactor = new Redactor(this.repo.secrets)
     this.hooks.replace(this.repo.webhooks)
+    this.hookRunner = new HookRunner(this.repo.hooks, (m) => console.error(`hook: ${m}`))
   }
 
   agents(): AgentSummary[] {
@@ -179,16 +183,55 @@ export class Runtime {
       summarize: this.summarizerFor(profile, req.sessionId, runId),
       redact: (text) => this.redactor.redact(text),
       preloadSkills: activatedSkills(this.repo.skills, profile.skills, { text: req.text, workspace }, this.repo.routing.intents),
+      delegate: (agent, task) => this.delegate(req, workspace, runId, agent, task),
+      hooks: this.hookRunner,
       signal: req.signal,
     })
     try {
-      const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text })
+      const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text, parentRunId })
       this.store.appendMessages(req.sessionId, runId, result.appended)
       if (history.length === 0) this.store.touch(req.sessionId, req.text.slice(0, 80))
       return result
     } finally {
       this.activeBudgets.delete(runId)
-      void parentRunId
+    }
+  }
+
+  /** Run filho com outro perfil, sem historico da sessao, custo lancado na mesma sessao sob o run pai. */
+  private async delegate(req: RunRequest, workspace: string, parentRunId: string, agent: string, task: string): Promise<DelegationResult> {
+    const child = this.profile(agent)
+    await this.ensureMcp(child)
+    const adapter = createAdapter(child)
+    const runId = randomUUID()
+    const agentDay = this.repo.budgets.agents[child.name]?.day_usd
+    const budget = budgetFor(this.ledger, child, { runId, sessionId: req.sessionId }, agentDay, this.repo.budgets.global_month_usd)
+    this.activeBudgets.set(runId, budget)
+    const text: string[] = []
+    const runner = new AgentRunner({
+      adapter,
+      profile: child,
+      tools: this.registry,
+      skills: this.repo.skills,
+      policy: req.policyOverride ?? this.policyFor(child),
+      pricing: this.pricing,
+      ledger: this.ledger,
+      budget,
+      workspace,
+      approve: (call, def) => this.ask(req, runId, call, def),
+      emit: (event) => {
+        if (event.type === 'text_delta') text.push(event.delta)
+        else if (event.type !== 'run_finished') this.observe(req, runId, event)
+      },
+      redact: (t) => this.redactor.redact(t),
+      hooks: this.hookRunner,
+      signal: req.signal,
+    })
+    try {
+      const result = await runner.run({ runId, sessionId: req.sessionId, history: [], userText: task, parentRunId })
+      const last = [...result.appended].reverse().find((m) => m.role === 'assistant')
+      return { text: (last ? messageText(last) : text.join('')) || text.join(''), costUsd: result.costUsd, runId, stop: result.stop }
+    } finally {
+      this.activeBudgets.delete(runId)
     }
   }
 
