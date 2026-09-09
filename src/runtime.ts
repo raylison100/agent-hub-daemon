@@ -43,6 +43,7 @@ import type { AutomationRunner } from './automation.js'
 import type { DaemonConfig } from './config.js'
 import { openDb } from './db.js'
 import { OtelExporter, traceIdFrom } from './otel.js'
+import { PushService } from './push.js'
 import { SessionStore } from './store.js'
 import { Webhooks } from './webhooks.js'
 
@@ -56,6 +57,7 @@ export interface RunRequest {
   policyOverride?: Policy
   budgetOverride?: { runUsd?: number; sessionUsd?: number }
   autoApprove?: boolean
+  onApprovalPush?: boolean
 }
 
 export const draftPolicy: Policy = { read: 'allow', write: 'deny', exec: 'deny' }
@@ -74,6 +76,7 @@ export class Runtime {
   private readonly activeBudgets = new Map<string, Budget>()
   readonly hooks = new Webhooks([], process.env, (m) => console.error(m))
   readonly otel: OtelExporter | null
+  readonly push: PushService
   automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
@@ -89,6 +92,7 @@ export class Runtime {
     this.otel = config.otelEndpoint
       ? new OtelExporter({ endpoint: config.otelEndpoint, headers: config.otelHeaders, serviceName: 'agent-hub-daemon', log: (m) => console.error(m) })
       : null
+    this.push = new PushService(config.home, db, (m) => console.error(m))
     this.reload()
   }
 
@@ -355,6 +359,9 @@ export class Runtime {
     )
     this.store.recordApproval(info.id, req.sessionId, runId, def.name, call.args)
     req.onApproval(info)
+    if (req.onApprovalPush) {
+      void this.push.send({ title: `Aprovar ${def.name}?`, body: JSON.stringify(call.args).slice(0, 120), url: `/session/${req.sessionId}`, tag: `approval-${info.id}` })
+    }
     const decision = await promise
     this.store.resolveApproval(info.id, decision)
     return decision

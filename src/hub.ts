@@ -171,6 +171,19 @@ export class ConnectionHub {
         await this.connectMcp(frame.server)
         send({ type: 'mcp.prompt.get', server: frame.server, name: frame.name, text: await runtime.mcp.getPrompt(frame.server, frame.name, frame.args ?? {}) })
         return
+      case 'push.vapid':
+        send({ type: 'push.vapid', public_key: runtime.push.publicKey, subscriptions: runtime.push.count() })
+        return
+      case 'push.subscribe':
+        runtime.push.subscribe(frame.subscription, conn.client)
+        send({ type: 'push.subscribed', endpoint: frame.subscription.endpoint })
+        return
+      case 'push.unsubscribe':
+        runtime.push.unsubscribe(frame.endpoint)
+        return
+      case 'push.test':
+        await runtime.push.send({ title: 'Agent Hub', body: `Notificacoes ativas em ${runtime.config.deviceName}`, tag: 'teste' })
+        return
     }
   }
 
@@ -200,6 +213,12 @@ export class ConnectionHub {
           if (event.type === 'run_finished') {
             void runtime.hooks.emit('run.end', { session_id: sessionId, run_id: runId, stop: event.stop, cost_usd: event.costUsd, steps: event.steps })
             if (event.stop === 'budget_exceeded') void runtime.hooks.emit('budget.exceeded', { session_id: sessionId, run_id: runId, message: event.error ?? '' })
+            void runtime.push.send({
+              title: `Run ${event.stop === 'end' ? 'concluido' : event.stop}`,
+              body: `${event.steps} passos, ${event.costUsd.toFixed(4)} USD`,
+              url: `/session/${sessionId}`,
+              tag: `run-${runId}`,
+            })
           }
         },
         onApproval: (info) => {
@@ -215,6 +234,12 @@ export class ConnectionHub {
           }
           this.broadcast(frame)
           void runtime.hooks.emit('approval.required', { approval_id: info.id, session_id: info.sessionId, tool: info.tool, risk: info.risk, expires_at: info.expiresAt })
+          void runtime.push.send({
+            title: `Aprovar ${info.tool}?`,
+            body: JSON.stringify(info.args).slice(0, 120),
+            url: `/session/${info.sessionId}`,
+            tag: `approval-${info.id}`,
+          })
         },
       })
       .catch((err: unknown) => this.broadcast({ type: 'error', message: describe(err), ref: runId }))

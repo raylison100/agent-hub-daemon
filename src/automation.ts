@@ -99,6 +99,7 @@ export class AutomationRunner {
       opts.onStarted?.(session.id, runId)
       this.broadcast({ type: 'automation.started', kind: spec.kind, id: spec.id, session_id: session.id, run_id: runId })
       const result = await this.runtime.run({
+        onApprovalPush: true,
         sessionId: session.id,
         text: spec.prompt,
         runId,
@@ -124,6 +125,12 @@ export class AutomationRunner {
         .prepare('UPDATE automation_runs SET finished_at = ?, status = ?, cost_usd = ? WHERE id = ?')
         .run(Date.now(), result.stop, result.costUsd, automationRunId)
       this.broadcast({ type: 'automation.finished', kind: spec.kind, id: spec.id, session_id: session.id, run_id: runId, stop: result.stop, cost_usd: result.costUsd })
+      void this.runtime.push.send({
+        title: `Automacao ${spec.id} terminou`,
+        body: `${result.stop}, ${result.costUsd.toFixed(4)} USD`,
+        url: `/session/${session.id}`,
+        tag: `automation-${spec.id}`,
+      })
       void this.runtime.hooks.emit('automation.finished', { kind: spec.kind, id: spec.id, session_id: session.id, run_id: runId, stop: result.stop, cost_usd: result.costUsd })
       const updated = this.runtime.store.get(session.id)
       if (updated) this.broadcast({ type: 'session.updated', session: updated })
