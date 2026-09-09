@@ -147,7 +147,37 @@ export class ConnectionHub {
       case 'trigger.delete':
         if (!this.triggers.delete(frame.id)) throw new Error('gatilho nao encontrado')
         return
+      case 'mcp.servers': {
+        const connected = new Set(runtime.mcp.connected())
+        send({
+          type: 'mcp.servers',
+          servers: Object.entries(runtime.repo.mcp.servers).map(([name, cfg]) => ({ name, connected: connected.has(name), transport: cfg.url ? 'http' : 'stdio' })),
+        })
+        return
+      }
+      case 'mcp.resources':
+        await this.connectMcp(frame.server)
+        send({ type: 'mcp.resources', server: frame.server, resources: await runtime.mcp.resources(frame.server) })
+        return
+      case 'mcp.resource.read':
+        await this.connectMcp(frame.server)
+        send({ type: 'mcp.resource.read', server: frame.server, uri: frame.uri, text: await runtime.mcp.readResource(frame.server, frame.uri) })
+        return
+      case 'mcp.prompts':
+        await this.connectMcp(frame.server)
+        send({ type: 'mcp.prompts', server: frame.server, prompts: await runtime.mcp.prompts(frame.server) })
+        return
+      case 'mcp.prompt.get':
+        await this.connectMcp(frame.server)
+        send({ type: 'mcp.prompt.get', server: frame.server, name: frame.name, text: await runtime.mcp.getPrompt(frame.server, frame.name, frame.args ?? {}) })
+        return
     }
+  }
+
+  private async connectMcp(name: string): Promise<void> {
+    const config = this.runtime.repo.mcp.servers[name]
+    if (!config) throw new Error(`servidor MCP nao configurado: ${name}`)
+    this.runtime.registry.registerAll(await this.runtime.mcp.connect(name, config))
   }
 
   private startRun(sessionId: string, text: string, send: (f: ServerFrame) => void, mode: 'normal' | 'draft' | 'auto_approve' = 'normal'): void {

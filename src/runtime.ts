@@ -42,6 +42,7 @@ import { ApprovalQueue, type ApprovalDecision, type PendingApproval } from './ap
 import type { AutomationRunner } from './automation.js'
 import type { DaemonConfig } from './config.js'
 import { openDb } from './db.js'
+import { OtelExporter, traceIdFrom } from './otel.js'
 import { SessionStore } from './store.js'
 import { Webhooks } from './webhooks.js'
 
@@ -72,6 +73,7 @@ export class Runtime {
   readonly approvals = new ApprovalQueue()
   private readonly activeBudgets = new Map<string, Budget>()
   readonly hooks = new Webhooks([], process.env, (m) => console.error(m))
+  readonly otel: OtelExporter | null
   automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
@@ -84,6 +86,9 @@ export class Runtime {
     this.ledger = new Ledger(db)
     this.store = new SessionStore(db, this.ledger)
     this.registry.registerAll(nativeTools())
+    this.otel = config.otelEndpoint
+      ? new OtelExporter({ endpoint: config.otelEndpoint, headers: config.otelHeaders, serviceName: 'agent-hub-daemon', log: (m) => console.error(m) })
+      : null
     this.reload()
   }
 
@@ -246,7 +251,7 @@ export class Runtime {
       budget,
       workspace,
       approve: (call, def) => this.ask(req, runId, call, def),
-      emit: (event) => this.observe(req, runId, event),
+      emit: (event) => this.observe(req, runId, event, profile, adapter.provider),
       summarize: this.summarizerFor(profile, req.sessionId, runId),
       redact: (text) => this.redactor.redact(text),
       preloadSkills: activatedSkills(this.repo.skills, profile.skills, { text: req.text, workspace }, this.repo.routing.intents),
@@ -287,7 +292,7 @@ export class Runtime {
       approve: (call, def) => this.ask(req, runId, call, def),
       emit: (event) => {
         if (event.type === 'text_delta') text.push(event.delta)
-        else if (event.type !== 'run_finished') this.observe(req, runId, event)
+        else if (event.type !== 'run_finished') this.observe(req, runId, event, child, adapter.provider)
       },
       redact: (t) => this.redactor.redact(t),
       hooks: this.hookRunner,
@@ -355,7 +360,7 @@ export class Runtime {
     return decision
   }
 
-  private observe(req: RunRequest, runId: string, event: RunEvent): void {
+  private observe(req: RunRequest, runId: string, event: RunEvent, profile: AgentProfile, provider: string): void {
     if (event.type === 'tool_call') {
       this.store.recordToolEvent({ sessionId: req.sessionId, runId, name: event.call.name, args: event.call.args, decision: event.decision })
     }
@@ -371,7 +376,45 @@ export class Runtime {
         ms: event.ms,
       })
     }
+    this.trace(req.sessionId, runId, event, profile, provider)
     req.emit(event)
+  }
+
+  /** Um span por chamada ao modelo e por ferramenta, com atributos das convencoes de GenAI, quando o exportador esta ligado. */
+  private trace(sessionId: string, runId: string, event: RunEvent, profile: AgentProfile, provider: string): void {
+    if (!this.otel) return
+    const now = Date.now()
+    const base = { 'agent_hub.session_id': sessionId, 'agent_hub.run_id': runId, 'agent_hub.agent': profile.name }
+    if (event.type === 'usage') {
+      this.otel.span({
+        name: `chat ${event.model}`,
+        traceId: traceIdFrom(runId),
+        startMs: now - event.latencyMs,
+        endMs: now,
+        attributes: {
+          ...base,
+          'gen_ai.operation.name': 'chat',
+          'gen_ai.system': provider,
+          'gen_ai.request.model': event.model,
+          'gen_ai.usage.input_tokens': event.usage.input,
+          'gen_ai.usage.output_tokens': event.usage.output + event.usage.reasoning,
+          'agent_hub.cache_read_tokens': event.usage.cacheRead,
+          'agent_hub.cache_write_tokens': event.usage.cacheWrite,
+          'agent_hub.cost_usd': event.costUsd,
+          'agent_hub.step': event.step,
+        },
+      })
+    }
+    if (event.type === 'tool_result') {
+      this.otel.span({
+        name: `tool ${event.name}`,
+        traceId: traceIdFrom(runId),
+        startMs: now - event.ms,
+        endMs: now,
+        attributes: { ...base, 'gen_ai.tool.name': event.name, 'agent_hub.tool_error': event.isError },
+        status: event.isError ? 'error' : 'ok',
+      })
+    }
   }
 }
 

@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parse } from 'smol-toml'
+import { parseOtelHeaders } from './otel.js'
 
 export interface DaemonConfig {
   home: string
@@ -14,6 +15,8 @@ export interface DaemonConfig {
   approvalTimeoutMs: number
   deviceName: string
   relayUrl?: string
+  otelEndpoint?: string
+  otelHeaders: Record<string, string>
 }
 
 interface RawConfig {
@@ -25,6 +28,8 @@ interface RawConfig {
   approval_timeout_ms?: number
   device_name?: string
   relay_url?: string
+  otel_endpoint?: string
+  otel_headers?: Record<string, string>
 }
 
 export function configHome(): string {
@@ -47,6 +52,8 @@ export function loadConfig(): DaemonConfig {
     approvalTimeoutMs: raw.approval_timeout_ms ?? 10 * 60 * 1000,
     deviceName: raw.device_name ?? 'este-computador',
     relayUrl: process.env.AGENT_HUB_RELAY_URL ?? raw.relay_url,
+    otelEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? raw.otel_endpoint,
+    otelHeaders: process.env.OTEL_EXPORTER_OTLP_HEADERS ? parseOtelHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS) : (raw.otel_headers ?? {}),
   }
 }
 
@@ -83,6 +90,9 @@ export function exampleConfig(): string {
     'approval_timeout_ms = 600000',
     'device_name = "pc-casa"',
     '# relay_url = "wss://relay.exemplo.com"',
+    '# otel_endpoint = "http://localhost:4318"',
+    '# [otel_headers]',
+    '# authorization = "Bearer ..."',
     '',
   ].join('\n')
 }
