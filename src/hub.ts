@@ -1,5 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { protocolVersion, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { protocolVersion, resolveInside, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
 import { draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
@@ -230,6 +232,52 @@ export class ConnectionHub {
         runtime.secrets.set(frame.name, frame.value)
         send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
         return
+      case 'fs.list': {
+        const workspace = this.workspaceOf(frame.session_id)
+        const dir = resolveInside(workspace, frame.path ?? '.')
+        const entries = readdirSync(dir, { withFileTypes: true })
+          .filter((e) => !['node_modules', '.git', 'dist', 'vendor'].includes(e.name))
+          .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+          .map((e) => ({ name: e.name, dir: e.isDirectory() }))
+        send({ type: 'fs.list', path: relative(workspace, dir) || '.', entries })
+        return
+      }
+      case 'fs.read': {
+        const workspace = this.workspaceOf(frame.session_id)
+        const file = resolveInside(workspace, frame.path)
+        const max = frame.max_chars ?? 60_000
+        const raw = readFileSync(file, 'utf8')
+        send({ type: 'fs.read', path: relative(workspace, file), text: raw.slice(0, max), truncated: raw.length > max })
+        return
+      }
+      case 'fs.tree': {
+        const workspace = this.workspaceOf(frame.session_id)
+        const dir = resolveInside(workspace, frame.path ?? '.')
+        send({ type: 'fs.tree', path: relative(workspace, dir) || '.', text: tree(dir, frame.depth ?? 3) })
+        return
+      }
+      case 'skills.list': {
+        const allowed = frame.agent ? new Set(runtime.profile(frame.agent).skills) : null
+        send({
+          type: 'skills.list',
+          skills: [...runtime.repo.skills.values()]
+            .filter((s) => !allowed || allowed.has(s.name))
+            .map((s) => ({ name: s.name, description: s.description, source: s.name.includes(':') ? 'plugin' : 'agents' })),
+        })
+        return
+      }
+      case 'skill.get': {
+        const skill = runtime.repo.skills.get(frame.name)
+        if (!skill) throw new Error(`skill desconhecida: ${frame.name}`)
+        send({ type: 'skill.get', name: skill.name, body: skill.body })
+        return
+      }
+      case 'plugins.list':
+        send({
+          type: 'plugins.list',
+          plugins: runtime.repo.plugins.map((p) => ({ name: p.name, dir: p.dir, skills: p.skills.size, agents: p.profiles.size, mcp: Object.keys(p.mcp).length, hooks: p.hooks.length })),
+        })
+        return
       case 'secrets.delete':
         runtime.secrets.delete(frame.name)
         send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
@@ -238,6 +286,12 @@ export class ConnectionHub {
         void this.workflows.run({ name: frame.name, inputs: frame.inputs, workspace: frame.workspace }).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
         return
     }
+  }
+
+  private workspaceOf(sessionId: string): string {
+    const session = this.runtime.store.get(sessionId)
+    if (!session) throw new Error('sessao nao encontrada')
+    return session.workspace
   }
 
   private async connectMcp(name: string): Promise<void> {
@@ -312,6 +366,22 @@ export class ConnectionHub {
         if (session) this.broadcast({ type: 'session.updated', session })
       })
   }
+}
+
+/** Arvore de diretorios em texto, limitada em profundidade e em 400 linhas. */
+function tree(dir: string, depth: number): string {
+  const lines: string[] = []
+  const skip = new Set(['node_modules', '.git', 'dist', 'vendor', '.next', 'build', 'target'])
+  const walk = (d: string, prefix: string, level: number) => {
+    if (level > depth || lines.length > 400) return
+    for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))) {
+      if (skip.has(e.name)) continue
+      lines.push(`${prefix}${e.name}${e.isDirectory() ? '/' : ''}`)
+      if (e.isDirectory()) walk(join(d, e.name), `${prefix}  `, level + 1)
+    }
+  }
+  walk(dir, '', 1)
+  return lines.join('\n')
 }
 
 function safeSend(conn: Conn, frame: ServerFrame): void {
