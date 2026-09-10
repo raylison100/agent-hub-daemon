@@ -11,8 +11,12 @@ Estado: fase 1, esqueleto funcional por CLI. Planejamento em `../docs/`.
 - Node 22 ou superior e pnpm.
 - `../core` compilado (`pnpm build` la dentro), porque este pacote o consome
   por `link:../core`.
-- Chaves de API no ambiente: `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`. O
-  agente local usa Ollama em `http://127.0.0.1:11434` por padrao.
+- Chaves de API em `~/.agent-hub/.env` (`agent-hub-daemon init` cria o
+  modelo com permissao 600) ou no ambiente: `ANTHROPIC_API_KEY`,
+  `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`. Variaveis ja definidas no ambiente
+  vencem o arquivo. `agent-hub-daemon env` mostra quais foram encontradas
+  sem revelar valores. O agente local usa Ollama em
+  `http://${WIN_HOST}:11434` (o `dev.sh` define `WIN_HOST` no WSL).
 
 ## Configuracao
 

@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline/promises'
 import type { ReportGroup, RunEvent } from '@agent-hub/core'
 import type { PendingApproval } from './approvals.js'
 import { AutomationRunner } from './automation.js'
-import { ensureAccountToken, ensureDeviceId, ensureToken, exampleConfig, loadConfig } from './config.js'
+import { ensureAccountToken, ensureDeviceId, ensureToken, envTemplate, exampleConfig, loadConfig } from './config.js'
 import { serveMcp } from './mcp-server.js'
 import { Runtime } from './runtime.js'
 import { Scheduler } from './schedules.js'
@@ -21,12 +21,29 @@ program
   .action(() => {
     const config = loadConfig()
     const file = join(config.home, 'config.toml')
-    if (existsSync(file)) {
-      console.log(`ja existe: ${file}`)
-      return
+    if (existsSync(file)) console.log(`ja existe: ${file}`)
+    else {
+      writeFileSync(file, exampleConfig())
+      console.log(`criado: ${file}. Edite agents_dir e workspaces antes de iniciar.`)
     }
-    writeFileSync(file, exampleConfig())
-    console.log(`criado: ${file}. Edite agents_dir e workspaces antes de iniciar.`)
+    const envFile = join(config.home, '.env')
+    if (existsSync(envFile)) console.log(`ja existe: ${envFile}`)
+    else {
+      writeFileSync(envFile, envTemplate, { mode: 0o600 })
+      console.log(`criado: ${envFile}. Preencha as chaves de API.`)
+    }
+  })
+
+program
+  .command('env')
+  .description('Mostra quais chaves o daemon encontra, sem revelar valores')
+  .action(() => {
+    const config = loadConfig()
+    for (const name of ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY']) {
+      const v = process.env[name]
+      console.log(`${name}\t${v ? `definida (${v.length} caracteres, termina em ${v.slice(-4)})` : 'ausente'}`)
+    }
+    console.log(`arquivo: ${join(config.home, '.env')} ${existsSync(join(config.home, '.env')) ? 'existe' : 'ausente'}`)
   })
 
 program

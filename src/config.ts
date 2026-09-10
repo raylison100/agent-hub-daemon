@@ -36,10 +36,47 @@ export function configHome(): string {
   return process.env.AGENT_HUB_HOME ?? join(homedir(), '.agent-hub')
 }
 
+/** Carrega `~/.agent-hub/.env` no ambiente do processo sem sobrescrever variaveis ja definidas. */
+export function loadDotEnv(home: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const file = join(home, '.env')
+  if (!existsSync(file)) return []
+  const loaded: string[] = []
+  for (const raw of readFileSync(file, 'utf8').split('\n')) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    const i = line.indexOf('=')
+    if (i <= 0) continue
+    const key = line.slice(0, i).trim().replace(/^export\s+/, '')
+    let value = line.slice(i + 1).trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1)
+    if (env[key] === undefined && value !== '') {
+      env[key] = value
+      loaded.push(key)
+    }
+  }
+  return loaded
+}
+
+export const envTemplate = [
+  '# Chaves lidas pelo daemon no inicio. Nao versionar este arquivo.',
+  '# Variaveis ja definidas no ambiente tem prioridade sobre estas.',
+  'ANTHROPIC_API_KEY=',
+  'DEEPSEEK_API_KEY=',
+  'OPENAI_API_KEY=',
+  '',
+  '# Servidores MCP referenciam variaveis por nome em agents/mcp.json, por exemplo:',
+  '# GITLAB_TOKEN=',
+  '',
+  '# Gatilhos externos: um segredo por gatilho, referenciado em secret_ref',
+  '# TRIGGER_MR_SECRET=',
+  '',
+].join('\n')
+
 /** Le `~/.agent-hub/config.toml` com padroes seguros: apenas localhost e nenhum workspace liberado. */
 export function loadConfig(): DaemonConfig {
   const home = configHome()
   mkdirSync(home, { recursive: true })
+  loadDotEnv(home)
   const file = join(home, 'config.toml')
   const raw: RawConfig = existsSync(file) ? (parse(readFileSync(file, 'utf8')) as RawConfig) : {}
   return {
