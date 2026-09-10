@@ -33,6 +33,7 @@ import {
   type AgentProfile,
   type AgentSummary,
   type AgentsRepo,
+  type BackgroundTask,
   type Budget,
   type BudgetScope,
   type DelegationOptions,
@@ -59,6 +60,7 @@ import { openDb } from './db.js'
 import { OtelExporter, traceIdFrom } from './otel.js'
 import { PushService } from './push.js'
 import { SecretStore } from './secrets.js'
+import { Terminals } from './terminals.js'
 import { SessionStore } from './store.js'
 import { Webhooks } from './webhooks.js'
 import { createWorktree, isGitRepo } from './worktrees.js'
@@ -67,6 +69,9 @@ interface SpawnedTask {
   taskId: string
   runId: string
   agent: string
+  sessionId: string
+  task: string
+  startedAt: number
   promise: Promise<DelegationResult>
   result?: DelegationResult
   collected: boolean
@@ -160,6 +165,7 @@ export class Runtime {
   readonly otel: OtelExporter | null
   readonly push: PushService
   readonly secrets: SecretStore
+  readonly terminals = new Terminals()
   automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
@@ -259,6 +265,30 @@ export class Runtime {
       days: byDay.map((r) => ({ date: r.d, count: r.n })),
       models,
     }
+  }
+
+  /** Subagentes iniciados em segundo plano, para o painel de tarefas. */
+  backgroundTasks(sessionId?: string): BackgroundTask[] {
+    const out: BackgroundTask[] = []
+    for (const tasks of this.spawned.values()) {
+      for (const t of tasks.values()) {
+        if (sessionId && t.sessionId !== sessionId) continue
+        const status = t.result === undefined ? 'rodando' : t.result.stop === 'error' ? 'erro' : 'pronto'
+        out.push({
+          task_id: t.taskId,
+          run_id: t.runId,
+          session_id: t.sessionId,
+          session_title: this.store.get(t.sessionId)?.title ?? '',
+          agent: t.agent,
+          task: t.task,
+          status,
+          cost_usd: t.result?.costUsd ?? 0,
+          collected: t.collected,
+          started_at: t.startedAt,
+        })
+      }
+    }
+    return out.sort((a, b) => b.started_at - a.started_at)
   }
 
   profile(name: string): AgentProfile {
@@ -595,7 +625,16 @@ export class Runtime {
   private async spawn(req: RunRequest, workspace: string, parentRunId: string, agent: string, task: string, opts: DelegationOptions): Promise<{ taskId: string; runId: string }> {
     const runId = randomUUID()
     const taskId = runId.slice(0, 8)
-    const entry: SpawnedTask = { taskId, runId, agent, promise: Promise.resolve({ text: '', costUsd: 0, runId, stop: 'error' }), collected: false }
+    const entry: SpawnedTask = {
+      taskId,
+      runId,
+      agent,
+      sessionId: req.sessionId,
+      task,
+      startedAt: Date.now(),
+      promise: Promise.resolve({ text: '', costUsd: 0, runId, stop: 'error' }),
+      collected: false,
+    }
     let tasks = this.spawned.get(parentRunId)
     if (!tasks) {
       tasks = new Map()

@@ -110,6 +110,37 @@ export class ConnectionHub {
       case 'feedback.summary':
         send({ type: 'feedback.summary', rows: runtime.feedbackSummary() })
         return
+      case 'term.open': {
+        const session = runtime.store.get(frame.session_id)
+        if (!session) throw new Error('sessao nao encontrada')
+        if (frame.term_id && runtime.terminals.has(frame.term_id)) {
+          send({ type: 'term.opened', term_id: frame.term_id, session_id: frame.session_id, cwd: session.workspace, buffer: runtime.terminals.buffer(frame.term_id) })
+          runtime.terminals.resize(frame.term_id, frame.cols, frame.rows)
+          return
+        }
+        const termId = runtime.terminals.open({
+          cwd: session.workspace,
+          cols: frame.cols,
+          rows: frame.rows,
+          env: process.env,
+          onData: (data) => this.broadcast({ type: 'term.data', term_id: termId, data }),
+          onExit: (code) => this.broadcast({ type: 'term.exit', term_id: termId, code }),
+        })
+        send({ type: 'term.opened', term_id: termId, session_id: frame.session_id, cwd: session.workspace, buffer: '' })
+        return
+      }
+      case 'term.input':
+        runtime.terminals.write(frame.term_id, frame.data)
+        return
+      case 'term.resize':
+        runtime.terminals.resize(frame.term_id, frame.cols, frame.rows)
+        return
+      case 'term.close':
+        runtime.terminals.close(frame.term_id)
+        return
+      case 'tasks.list':
+        send({ type: 'tasks.list', tasks: runtime.backgroundTasks(frame.session_id) })
+        return
       case 'stats.overview':
         send({ type: 'stats.overview', stats: runtime.statsOverview(frame.days) })
         return

@@ -173,6 +173,7 @@ program
     }
     const outcome = await engine.run({ name: nome, inputs, workspace: opts.workspace })
     console.log(`\n[${outcome.status}] custo ${outcome.costUsd.toFixed(4)} USD${outcome.error ? `: ${outcome.error}` : ''}`)
+    runtime.terminals.closeAll()
     await runtime.mcp.close()
   })
 
@@ -319,6 +320,7 @@ program
       console.log(`\n[${result.stop}] passos ${result.steps}, custo ${result.costUsd.toFixed(4)} USD`)
     }
     rl.close()
+    runtime.terminals.closeAll()
     await runtime.mcp.close()
   })
 
