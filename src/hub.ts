@@ -2,7 +2,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { protocolVersion, resolveInside, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
-import { draftPolicy, type Runtime } from './runtime.js'
+import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
 import { WorkflowEngine } from './workflows.js'
@@ -79,17 +79,26 @@ export class ConnectionHub {
         return
       case 'session.create': {
         const workspace = runtime.assertWorkspace(frame.workspace)
-        const { agent, routed } = await runtime.resolveAgent(frame.agent, frame.text ?? frame.title ?? '', workspace)
+        const agent = frame.agent === undefined || frame.agent === autoAgent ? autoAgent : runtime.profile(frame.agent).name
         const session = runtime.store.create(agent, workspace, frame.title)
-        send({ type: 'session.created', session, routed: routed ? { intent: routed.intent, rule: routed.rule } : undefined })
+        send({ type: 'session.created', session })
         this.broadcast({ type: 'session.updated', session })
         return
       }
+      case 'routing.info':
+        send({
+          type: 'routing.info',
+          default_agent: runtime.repo.routing.default_agent ?? null,
+          improver: runtime.repo.routing.prompt_improver?.agent ?? null,
+          classifier: runtime.repo.routing.classifier?.agent ?? null,
+        })
+        return
       case 'session.list':
         send({ type: 'session.list', sessions: runtime.store.list(frame.limit, frame.include_archived) })
         return
       case 'session.update': {
-        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived })
+        const agent = frame.agent === undefined ? undefined : frame.agent === autoAgent ? autoAgent : runtime.profile(frame.agent).name
+        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived, agent })
         if (!session) throw new Error('sessao nao encontrada')
         this.broadcast({ type: 'session.updated', session })
         return
@@ -124,7 +133,7 @@ export class ConnectionHub {
         send({ type: 'sync', session_id: frame.session_id, events: runtime.store.eventsSince(frame.session_id, frame.since_seq) })
         return
       case 'run.start':
-        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning)
+        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve)
         return
       case 'cost.status': {
         const s = runtime.costStatus()
@@ -311,15 +320,15 @@ export class ConnectionHub {
     send: (f: ServerFrame) => void,
     mode: RunMode = 'normal',
     reasoning?: 'low' | 'medium' | 'high' | 'max',
+    agent?: string,
+    improve?: boolean,
   ): void {
     const runtime = this.runtime
     const runId = randomUUID()
     const controller = new AbortController()
     this.runs.set(runId, controller)
     send({ type: 'run.started', run_id: runId, session_id: sessionId })
-    const session = runtime.store.get(sessionId)
-    const base = session ? runtime.policyFor(runtime.profile(session.agent)) : draftPolicy
-    const policyOverride = mode === 'draft' ? draftPolicy : mode === 'accept_edits' ? { ...base, read: 'allow' as const, write: 'allow' as const } : undefined
+    const policyOverride = mode === 'draft' ? draftPolicy : mode === 'accept_edits' ? { read: 'allow' as const, write: 'allow' as const, exec: 'ask' as const } : undefined
     void runtime
       .run({
         sessionId,
@@ -329,6 +338,8 @@ export class ConnectionHub {
         policyOverride,
         autoApprove: mode === 'auto_approve',
         reasoningOverride: reasoning,
+        agentOverride: agent && agent !== autoAgent ? agent : undefined,
+        improve,
         emit: (event) => {
           const seq = runtime.store.appendEvent(sessionId, runId, event)
           this.broadcast({ type: 'event', session_id: sessionId, run_id: runId, seq, event })

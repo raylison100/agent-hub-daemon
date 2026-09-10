@@ -17,6 +17,7 @@ import {
   createAdapter,
   defaultPolicy,
   gitPluginDir,
+  improverPrompt,
   isDestructive,
   loadAgentsRepo,
   messageText,
@@ -72,7 +73,11 @@ export interface RunRequest {
   autoApprove?: boolean
   onApprovalPush?: boolean
   reasoningOverride?: 'low' | 'medium' | 'high' | 'max'
+  agentOverride?: string
+  improve?: boolean
 }
+
+export const autoAgent = 'auto'
 
 export const draftPolicy: Policy = { read: 'allow', write: 'deny', exec: 'deny' }
 
@@ -172,17 +177,56 @@ export class Runtime {
     return policy
   }
 
-  /** Escolhe o agente: o explicito vence; depois as regras por palavra chave; por fim o classificador por modelo, se configurado. */
-  async resolveAgent(explicit: string | undefined, text: string, workspace: string): Promise<{ agent: string; routed: RouteResult | null }> {
-    if (explicit) return { agent: this.profile(explicit).name, routed: null }
+  /** Escolhe o agente: explicito vence; depois regras por palavra chave; classificador por modelo; por fim o `default_agent`. `auto` significa decidir a cada mensagem. */
+  async resolveAgent(explicit: string | undefined, text: string, workspace: string): Promise<{ agent: string; routed: RouteResult | null; by: 'fixed' | 'rule' | 'classifier' | 'default' }> {
+    if (explicit && explicit !== autoAgent) return { agent: this.profile(explicit).name, routed: null, by: 'fixed' }
     const ctx = { text, workspace }
     let routed = route(this.repo.routing, ctx)
-    if (!routed && this.repo.routing.classifier) {
+    if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'rule' }
+    if (this.repo.routing.classifier && text.trim()) {
       const intent = await this.classify(text)
       if (intent) routed = route(this.repo.routing, ctx, intent)
+      if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'classifier' }
     }
-    if (!routed) throw new Error('nenhuma regra de roteamento casou; informe o agente')
-    return { agent: this.profile(routed.agent).name, routed }
+    if (this.repo.routing.default_agent) return { agent: this.profile(this.repo.routing.default_agent).name, routed: null, by: 'default' }
+    throw new Error('nenhuma regra de roteamento casou e nao ha default_agent em routing.json')
+  }
+
+  /** Reescreve o pedido do usuario para o agente alvo com o modelo barato de `prompt_improver`, lancando o custo na sessao. */
+  private async improvePrompt(sessionId: string, runId: string, text: string, target: AgentProfile): Promise<{ improved: string; by: string; costUsd: number } | null> {
+    const cfg = this.repo.routing.prompt_improver
+    if (!cfg || text.trim().length < cfg.min_chars || text.trimStart().startsWith('/')) return null
+    const improver = this.repo.profiles.get(cfg.agent)
+    if (!improver || improver.name === target.name) return null
+    const adapter = createAdapter(improver)
+    const result = await adapter.chat({
+      system: 'Voce reescreve pedidos para agentes de programacao. Responda apenas com o prompt reescrito.',
+      messages: [{ role: 'user', parts: [{ type: 'text', text: improverPrompt(text, target.name, target.description) }] }],
+      tools: [],
+      maxOutput: cfg.max_output,
+      reasoning: 'low',
+      systemCacheTtl: '5m',
+      providerOptions: improver.provider_options,
+    })
+    const costUsd = this.pricing.cost(adapter.provider, result.model, result.usage)
+    this.ledger.record({
+      ts: Date.now(),
+      sessionId,
+      runId: randomUUID(),
+      parentRunId: runId,
+      step: 0,
+      agent: improver.name,
+      provider: adapter.provider,
+      model: result.model,
+      usage: result.usage,
+      costUsd,
+      pricingVersion: this.pricing.version,
+      latencyMs: result.latencyMs,
+      stopReason: 'improve',
+    })
+    const improved = messageText(result.message).trim()
+    if (!improved || improved.length < 8) return null
+    return { improved, by: improver.name, costUsd }
   }
 
   /** Classificador de intencao por modelo barato, com custo lancado no ledger sob a sessao `roteamento`. */
@@ -270,9 +314,29 @@ export class Runtime {
   async run(req: RunRequest): Promise<RunResult> {
     const session = this.store.get(req.sessionId)
     if (!session) throw new Error(`sessao nao encontrada: ${req.sessionId}`)
-    const base = this.profile(session.agent)
-    const profile = req.reasoningOverride ? { ...base, reasoning: req.reasoningOverride } : base
     const runId = req.runId ?? randomUUID()
+    const chosen = req.agentOverride
+      ? { agent: this.profile(req.agentOverride).name, routed: null, by: 'override' as const }
+      : await this.resolveAgent(session.agent, req.text, session.workspace)
+    const base = this.profile(chosen.agent)
+    if (session.agent === autoAgent || chosen.by === 'override') {
+      req.emit({
+        type: 'routed',
+        agent: base.name,
+        model: `${base.provider}/${base.model}`,
+        by: chosen.by,
+        intent: chosen.routed?.intent ?? null,
+        reason: chosen.routed ? `regra ${JSON.stringify(chosen.routed.rule.when)}` : chosen.by === 'default' ? 'default_agent do routing.json' : chosen.by,
+      })
+    }
+    if (req.improve) {
+      const improved = await this.improvePrompt(req.sessionId, runId, req.text, base).catch(() => null)
+      if (improved) {
+        req.emit({ type: 'prompt_improved', by: improved.by, original: req.text, improved: improved.improved, costUsd: improved.costUsd })
+        req = { ...req, text: `${improved.improved}\n\n<pedido_original>\n${req.text}\n</pedido_original>` }
+      }
+    }
+    const profile = req.reasoningOverride ? { ...base, reasoning: req.reasoningOverride } : base
     const result = await this.runWith(profile, session.workspace, req, runId)
     if (result.stop !== 'tool_call_invalid' || !profile.fallback_agent) return result
     const fallback = this.profile(profile.fallback_agent)

@@ -62,8 +62,9 @@ export class SessionStore {
   }
 
   /** Renomeia, fixa ou arquiva sem mexer em `updated_at`, para nao reordenar a lista. */
-  update(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean }): SessionSummary | undefined {
+  update(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; agent?: string }): SessionSummary | undefined {
     if (patch.title !== undefined) this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(patch.title.trim().slice(0, 120) || 'Sem titulo', id)
+    if (patch.agent !== undefined) this.db.prepare('UPDATE sessions SET agent = ? WHERE id = ?').run(patch.agent, id)
     if (patch.pinned !== undefined) this.db.prepare('UPDATE sessions SET pinned = ? WHERE id = ?').run(patch.pinned ? 1 : 0, id)
     if (patch.archived !== undefined) this.db.prepare('UPDATE sessions SET archived = ? WHERE id = ?').run(patch.archived ? 1 : 0, id)
     return this.get(id)
