@@ -85,6 +85,18 @@ export class ConnectionHub {
         this.broadcast({ type: 'session.updated', session })
         return
       }
+      case 'workspace.roots':
+        send({ type: 'workspace.roots', roots: runtime.config.workspaces })
+        return
+      case 'workspace.list': {
+        const target = runtime.assertWorkspace(frame.path)
+        const dirs = readdirSync(target, { withFileTypes: true })
+          .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+          .map((e) => e.name)
+          .sort((a, b) => a.localeCompare(b))
+        send({ type: 'workspace.list', path: target, dirs })
+        return
+      }
       case 'feedback.set': {
         runtime.setFeedback(frame.session_id, frame.run_id, frame.verdict)
         this.broadcast({ type: 'feedback.ok', session_id: frame.session_id, run_id: frame.run_id, verdict: frame.verdict })
