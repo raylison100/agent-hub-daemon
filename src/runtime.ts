@@ -44,6 +44,7 @@ import type { DaemonConfig } from './config.js'
 import { openDb } from './db.js'
 import { OtelExporter, traceIdFrom } from './otel.js'
 import { PushService } from './push.js'
+import { SecretStore } from './secrets.js'
 import { SessionStore } from './store.js'
 import { Webhooks } from './webhooks.js'
 
@@ -78,6 +79,7 @@ export class Runtime {
   readonly hooks = new Webhooks([], process.env, (m) => console.error(m))
   readonly otel: OtelExporter | null
   readonly push: PushService
+  readonly secrets: SecretStore
   automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
@@ -94,6 +96,8 @@ export class Runtime {
       ? new OtelExporter({ endpoint: config.otelEndpoint, headers: config.otelHeaders, serviceName: 'agent-hub-daemon', log: (m) => console.error(m) })
       : null
     this.push = new PushService(config.home, db, (m) => console.error(m))
+    this.secrets = new SecretStore(config.home, db)
+    this.secrets.applyToEnv()
     this.reload()
   }
 

@@ -202,6 +202,17 @@ export class ConnectionHub {
       case 'workflow.list':
         send({ type: 'workflow.list', workflows: this.workflows.list() })
         return
+      case 'secrets.list':
+        send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
+        return
+      case 'secrets.set':
+        runtime.secrets.set(frame.name, frame.value)
+        send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
+        return
+      case 'secrets.delete':
+        runtime.secrets.delete(frame.name)
+        send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
+        return
       case 'workflow.run':
         void this.workflows.run({ name: frame.name, inputs: frame.inputs, workspace: frame.workspace }).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
         return
