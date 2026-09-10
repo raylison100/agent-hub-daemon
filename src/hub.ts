@@ -276,7 +276,7 @@ export class ConnectionHub {
         send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
         return
       case 'fs.list': {
-        const workspace = this.workspaceOf(frame.session_id)
+        const workspace = this.workspaceOf(frame.session_id, frame.workspace)
         const dir = resolveInside(workspace, frame.path ?? '.')
         const entries = readdirSync(dir, { withFileTypes: true })
           .filter((e) => !['node_modules', '.git', 'dist', 'vendor'].includes(e.name))
@@ -286,7 +286,7 @@ export class ConnectionHub {
         return
       }
       case 'fs.read': {
-        const workspace = this.workspaceOf(frame.session_id)
+        const workspace = this.workspaceOf(frame.session_id, frame.workspace)
         const file = resolveInside(workspace, frame.path)
         const max = frame.max_chars ?? 60_000
         const raw = readFileSync(file, 'utf8')
@@ -294,7 +294,7 @@ export class ConnectionHub {
         return
       }
       case 'fs.tree': {
-        const workspace = this.workspaceOf(frame.session_id)
+        const workspace = this.workspaceOf(frame.session_id, frame.workspace)
         const dir = resolveInside(workspace, frame.path ?? '.')
         send({ type: 'fs.tree', path: relative(workspace, dir) || '.', text: tree(dir, frame.depth ?? 3) })
         return
@@ -331,10 +331,15 @@ export class ConnectionHub {
     }
   }
 
-  private workspaceOf(sessionId: string): string {
-    const session = this.runtime.store.get(sessionId)
-    if (!session) throw new Error('sessao nao encontrada')
-    return session.workspace
+  /** Workspace alvo de um frame de arquivos: pela sessao quando existe, senao pelo caminho informado, sempre validado contra as raizes. */
+  private workspaceOf(sessionId?: string, workspace?: string): string {
+    if (sessionId) {
+      const session = this.runtime.store.get(sessionId)
+      if (!session) throw new Error('sessao nao encontrada')
+      return session.workspace
+    }
+    if (workspace) return this.runtime.assertWorkspace(workspace)
+    throw new Error('informe session_id ou workspace')
   }
 
   private async connectMcp(name: string): Promise<void> {
@@ -357,7 +362,8 @@ export class ConnectionHub {
     const controller = new AbortController()
     this.runs.set(runId, controller)
     send({ type: 'run.started', run_id: runId, session_id: sessionId })
-    runtime.store.update(sessionId, { mode })
+    const withMode = runtime.store.update(sessionId, { mode })
+    if (withMode) this.broadcast({ type: 'session.updated', session: withMode })
     const policyOverride = mode === 'draft' ? draftPolicy : mode === 'accept_edits' ? { read: 'allow' as const, write: 'allow' as const, exec: 'ask' as const } : undefined
     void runtime
       .run({

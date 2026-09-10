@@ -120,6 +120,12 @@ function streaksOf(dates: string[]): { current: number; longest: number } {
   return { current, longest }
 }
 
+/** Titulo da sessao a partir do pedido, usando o texto original quando o reescritor entrou no meio. */
+function titleFrom(text: string): string {
+  const original = /<pedido_original>\n([\s\S]*?)\n<\/pedido_original>/.exec(text)
+  return (original ? original[1]! : text).replace(/\s+/g, ' ').trim().slice(0, 80)
+}
+
 export interface ResolvedAgent {
   agent: string
   routed: RouteResult | null
@@ -570,7 +576,7 @@ export class Runtime {
     try {
       const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text, parentRunId })
       this.store.appendMessages(req.sessionId, runId, result.appended)
-      if (history.length === 0) this.store.touch(req.sessionId, req.text.slice(0, 80))
+      if (history.length === 0) this.store.touch(req.sessionId, titleFrom(req.text))
       return result
     } finally {
       this.activeBudgets.delete(runId)
