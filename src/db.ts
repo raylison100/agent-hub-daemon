@@ -103,6 +103,23 @@ function migrate(db: DatabaseType): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS runs (
+      run_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      intent TEXT,
+      routed_by TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS feedback (
+      run_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      intent TEXT,
+      verdict TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS feedback_agent ON feedback(agent, intent);
     CREATE TABLE IF NOT EXISTS triggers (
       id TEXT PRIMARY KEY,
       spec_json TEXT NOT NULL,

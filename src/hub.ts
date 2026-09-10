@@ -85,6 +85,20 @@ export class ConnectionHub {
         this.broadcast({ type: 'session.updated', session })
         return
       }
+      case 'feedback.set': {
+        runtime.setFeedback(frame.session_id, frame.run_id, frame.verdict)
+        this.broadcast({ type: 'feedback.ok', session_id: frame.session_id, run_id: frame.run_id, verdict: frame.verdict })
+        return
+      }
+      case 'feedback.list':
+        send({ type: 'feedback.list', session_id: frame.session_id, items: runtime.feedbackList(frame.session_id) })
+        return
+      case 'feedback.summary':
+        send({ type: 'feedback.summary', rows: runtime.feedbackSummary() })
+        return
+      case 'stats.overview':
+        send({ type: 'stats.overview', stats: runtime.statsOverview(frame.days) })
+        return
       case 'routing.info':
         send({
           type: 'routing.info',

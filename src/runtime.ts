@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -25,6 +26,7 @@ import {
   messageText,
   nativeTools,
   classifyIntent,
+  feedbackDelta,
   parseClassifierAnswer,
   route,
   scoreAgents,
@@ -42,6 +44,7 @@ import {
   type RunEvent,
   type ScoreCandidate,
   type ScoredAgent,
+  type StatsOverview,
   type RunResult,
   type Summarizer,
   type ToolCallPart,
@@ -91,6 +94,31 @@ export const draftPolicy: Policy = { read: 'allow', write: 'deny', exec: 'deny' 
 const summarySystem =
   'Voce resume conversas entre um usuario e um agente de programacao. Preserve decisoes tomadas, arquivos tocados, ' +
   'erros encontrados e o que ainda falta. Sem introducao, sem opiniao, em topicos curtos.'
+
+const dayMs = 86_400_000
+
+function startOfDay(ts: number): number {
+  const d = new Date(ts)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+/** Sequencias de dias ativos consecutivos a partir das datas locais ordenadas. */
+function streaksOf(dates: string[]): { current: number; longest: number } {
+  let longest = 0
+  let run = 0
+  let prev: number | null = null
+  for (const d of dates) {
+    const ts = new Date(`${d}T00:00:00`).getTime()
+    run = prev !== null && ts - prev === dayMs ? run + 1 : 1
+    if (run > longest) longest = run
+    prev = ts
+  }
+  const today = startOfDay(Date.now())
+  const last = dates.length > 0 ? new Date(`${dates[dates.length - 1]}T00:00:00`).getTime() : null
+  const current = last !== null && today - last <= dayMs ? run : 0
+  return { current, longest }
+}
 
 export interface ResolvedAgent {
   agent: string
@@ -190,6 +218,41 @@ export class Runtime {
     }
   }
 
+  /** Estatisticas de uso para a tela inicial: totais, sequencia de dias, hora de pico, modelo favorito e atividade diaria. */
+  statsOverview(days?: number): StatsOverview {
+    const since = days ? startOfDay(Date.now() - (days - 1) * dayMs) : 0
+    const one = <T>(sql: string): T => this.db.prepare(sql).get(since) as T
+    const sessions = one<{ n: number }>('SELECT COUNT(*) AS n FROM sessions WHERE created_at >= ?').n
+    const messages = one<{ n: number }>('SELECT COUNT(*) AS n FROM messages WHERE created_at >= ?').n
+    const ledger = one<{ tokens: number | null; cost: number | null }>(
+      'SELECT SUM(input + output + cache_read + cache_write + reasoning) AS tokens, SUM(cost_usd) AS cost FROM ledger WHERE ts >= ?',
+    )
+    const byDay = this.db
+      .prepare("SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS d, COUNT(*) AS n FROM messages WHERE created_at >= ? GROUP BY d ORDER BY d")
+      .all(since) as { d: string; n: number }[]
+    const peak = this.db
+      .prepare("SELECT CAST(strftime('%H', created_at / 1000, 'unixepoch', 'localtime') AS INTEGER) AS h, COUNT(*) AS n FROM messages WHERE created_at >= ? GROUP BY h ORDER BY n DESC, h LIMIT 1")
+      .get(since) as { h: number } | undefined
+    const models = this.db
+      .prepare('SELECT model, COUNT(*) AS calls, SUM(input + output + cache_read + cache_write + reasoning) AS tokens, SUM(cost_usd) AS cost_usd FROM ledger WHERE ts >= ? GROUP BY model ORDER BY calls DESC')
+      .all(since) as { model: string; calls: number; tokens: number; cost_usd: number }[]
+    const streaks = streaksOf(byDay.map((r) => r.d))
+    return {
+      user: userInfo().username,
+      sessions,
+      messages,
+      total_tokens: ledger.tokens ?? 0,
+      active_days: byDay.length,
+      current_streak_days: streaks.current,
+      longest_streak_days: streaks.longest,
+      peak_hour: peak?.h ?? null,
+      favorite_model: models[0]?.model ?? null,
+      cost_usd: ledger.cost ?? 0,
+      days: byDay.map((r) => ({ date: r.d, count: r.n })),
+      models,
+    }
+  }
+
   profile(name: string): AgentProfile {
     const p = this.repo.profiles.get(name)
     if (!p) throw new Error(`agente desconhecido: ${name}`)
@@ -238,7 +301,48 @@ export class Runtime {
       intent,
       promptTokens: approxTokens(text),
       unavailable: (name) => this.unavailableReason(name),
+      adjustments: this.feedbackAdjustments(intent),
     })
+  }
+
+  /** Ajuste aprendido por agente para a intencao, somando o feedback da intencao com o feedback geral. */
+  feedbackAdjustments(intent: string | null): Record<string, number> {
+    const cfg = this.repo.routing.scoring?.feedback
+    if (!cfg) return {}
+    const key = intent ?? '*'
+    const rows = this.db
+      .prepare("SELECT agent, COALESCE(intent, '*') AS intent, SUM(verdict = 'good') AS good, SUM(verdict = 'bad') AS bad FROM feedback WHERE COALESCE(intent, '*') = ? GROUP BY agent")
+      .all(key) as { agent: string; good: number; bad: number }[]
+    const out: Record<string, number> = {}
+    for (const r of rows) out[r.agent] = feedbackDelta(r.good, r.bad, cfg)
+    return out
+  }
+
+  /** Registra ou limpa o veredito do usuario sobre a resposta de um run, com agente e intencao gravados na hora do roteamento. */
+  setFeedback(sessionId: string, runId: string, verdict: 'good' | 'bad' | 'none'): void {
+    if (verdict === 'none') {
+      this.db.prepare('DELETE FROM feedback WHERE run_id = ?').run(runId)
+      return
+    }
+    const run = this.db.prepare('SELECT agent, intent FROM runs WHERE run_id = ?').get(runId) as { agent: string; intent: string | null } | undefined
+    const agent = run?.agent ?? (this.db.prepare('SELECT agent FROM messages WHERE run_id = ? AND agent IS NOT NULL LIMIT 1').get(runId) as { agent: string } | undefined)?.agent
+    if (!agent) throw new Error(`run sem agente conhecido: ${runId}`)
+    this.db
+      .prepare('INSERT INTO feedback (run_id, session_id, agent, intent, verdict, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET verdict = excluded.verdict, created_at = excluded.created_at')
+      .run(runId, sessionId, agent, run?.intent ?? null, verdict, Date.now())
+  }
+
+  feedbackList(sessionId: string): { run_id: string; verdict: 'good' | 'bad' }[] {
+    return this.db.prepare('SELECT run_id, verdict FROM feedback WHERE session_id = ?').all(sessionId) as { run_id: string; verdict: 'good' | 'bad' }[]
+  }
+
+  /** Somatorio de feedback por agente e intencao com o delta de capacidade resultante. */
+  feedbackSummary(): { agent: string; intent: string; good: number; bad: number; delta: number }[] {
+    const cfg = this.repo.routing.scoring?.feedback
+    const rows = this.db
+      .prepare("SELECT agent, COALESCE(intent, '*') AS intent, SUM(verdict = 'good') AS good, SUM(verdict = 'bad') AS bad FROM feedback GROUP BY agent, COALESCE(intent, '*') ORDER BY agent, intent")
+      .all() as { agent: string; intent: string; good: number; bad: number }[]
+    return rows.map((r) => ({ ...r, delta: cfg ? feedbackDelta(r.good, r.bad, cfg) : 0 }))
   }
 
   private priceOrNull(provider: string, model: string): ReturnType<Pricing['resolve']> | null {
@@ -392,6 +496,9 @@ export class Runtime {
       ? { agent: this.profile(req.agentOverride).name, routed: null, by: 'override' as const }
       : await this.resolveAgent(session.agent, req.text, session.workspace)
     const base = this.profile(chosen.agent)
+    this.db
+      .prepare('INSERT OR REPLACE INTO runs (run_id, session_id, agent, intent, routed_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(runId, req.sessionId, base.name, chosen.routed?.intent ?? chosen.intent ?? null, chosen.by, Date.now())
     if (session.agent === autoAgent || chosen.by === 'override') {
       req.emit({
         type: 'routed',

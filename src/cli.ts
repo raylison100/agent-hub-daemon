@@ -218,10 +218,24 @@ program
     }
     console.log(['agente', 'pontos', 'capacidade', 'usd/M', 'situacao'].join('	'))
     for (const r of scored.ranking) {
-      console.log([r.agent, r.score.toFixed(4), r.capability.toFixed(2), r.costPerMillion.toFixed(2), r.excluded ?? (r.agent === scored.chosen?.agent && !ruled ? 'escolhido' : 'apto')].join('	'))
+      console.log([r.agent, r.score.toFixed(4), `${r.capability.toFixed(2)}${r.adjustment !== 0 ? ` (${r.adjustment > 0 ? '+' : ''}${r.adjustment} aprendido)` : ''}`, r.costPerMillion.toFixed(2), r.excluded ?? (r.agent === scored.chosen?.agent && !ruled ? 'escolhido' : 'apto')].join('	'))
     }
     if (ruled) console.log(`decisao final: ${ruled.agent} (regra vence a pontuacao)`)
     else console.log(`decisao final: ${scored.chosen?.agent ?? runtime.repo.routing.default_agent ?? 'nenhum'}`)
+  })
+
+program
+  .command('feedback')
+  .description('Somatorio de feedback bom/ruim por agente e intencao com o ajuste de capacidade aprendido')
+  .action(() => {
+    const runtime = new Runtime(loadConfig())
+    const rows = runtime.feedbackSummary()
+    if (rows.length === 0) {
+      console.log('sem feedback registrado')
+      return
+    }
+    console.log(['agente', 'intencao', 'bom', 'ruim', 'ajuste'].join('	'))
+    for (const r of rows) console.log([r.agent, r.intent, r.good, r.bad, r.delta >= 0 ? `+${r.delta}` : `${r.delta}`].join('	'))
   })
 
 program

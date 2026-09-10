@@ -95,9 +95,9 @@ export class SessionStore {
   /** Historico que vai ao modelo: so mensagens do nivel principal, a partir da ultima compactacao. */
   history(sessionId: string): Message[] {
     const rows = this.db
-      .prepare('SELECT content_json FROM messages WHERE session_id = ? AND parent_run_id IS NULL ORDER BY id')
-      .all(sessionId) as { content_json: string }[]
-    const all = rows.map((r) => JSON.parse(r.content_json) as Message)
+      .prepare('SELECT run_id, content_json FROM messages WHERE session_id = ? AND parent_run_id IS NULL ORDER BY id')
+      .all(sessionId) as { run_id: string; content_json: string }[]
+    const all = rows.map((r) => ({ ...(JSON.parse(r.content_json) as Message), runId: r.run_id }))
     const lastCompaction = all.map((m, i) => (m.kind === 'compaction' ? i : -1)).reduce((a, b) => Math.max(a, b), -1)
     return lastCompaction > 0 ? all.slice(lastCompaction) : all
   }
