@@ -12,7 +12,7 @@ export interface SecretInfo {
 }
 
 const nameRule = /^[A-Z][A-Z0-9_]{1,63}$/
-const knownNames = ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY']
+const knownNames = ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY']
 
 /** Segredos cadastrados pela interface: AES-256-GCM no SQLite com chave local em `~/.agent-hub/secrets.key`. */
 export class SecretStore {

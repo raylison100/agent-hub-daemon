@@ -63,6 +63,7 @@ export const envTemplate = [
   'ANTHROPIC_API_KEY=',
   'DEEPSEEK_API_KEY=',
   'OPENAI_API_KEY=',
+  'GEMINI_API_KEY=',
   '',
   '# Servidores MCP referenciam variaveis por nome em agents/mcp.json, por exemplo:',
   '# GITLAB_TOKEN=',

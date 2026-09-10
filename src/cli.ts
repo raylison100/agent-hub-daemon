@@ -39,7 +39,7 @@ program
   .description('Mostra quais chaves o daemon encontra, sem revelar valores')
   .action(() => {
     const config = loadConfig()
-    for (const name of ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY']) {
+    for (const name of ['ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY']) {
       const v = process.env[name]
       console.log(`${name}\t${v ? `definida (${v.length} caracteres, termina em ${v.slice(-4)})` : 'ausente'}`)
     }
