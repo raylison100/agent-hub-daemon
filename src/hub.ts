@@ -86,7 +86,7 @@ export class ConnectionHub {
         return
       }
       case 'workspace.roots':
-        send({ type: 'workspace.roots', roots: runtime.config.workspaces })
+        send({ type: 'workspace.roots', roots: runtime.config.workspaces, wsl_distro: process.env.WSL_DISTRO_NAME ?? null })
         return
       case 'workspace.list': {
         const target = runtime.assertWorkspace(frame.path)
