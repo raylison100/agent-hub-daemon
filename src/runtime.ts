@@ -37,6 +37,7 @@ import {
   type BudgetScope,
   type DelegationOptions,
   type DelegationResult,
+  type ImageInput,
   type Message,
   type Policy,
   type RoutedBy,
@@ -85,6 +86,7 @@ export interface RunRequest {
   reasoningOverride?: 'low' | 'medium' | 'high' | 'max'
   agentOverride?: string
   improve?: boolean
+  images?: ImageInput[]
 }
 
 export const autoAgent = 'auto'
@@ -273,18 +275,18 @@ export class Runtime {
   }
 
   /** Escolhe o agente: explicito vence; depois regras por palavra chave; classificador por modelo; pontuacao custo x capacidade; por fim o `default_agent`. `auto` significa decidir a cada mensagem. */
-  async resolveAgent(explicit: string | undefined, text: string, workspace: string): Promise<ResolvedAgent> {
+  async resolveAgent(explicit: string | undefined, text: string, workspace: string, needsVision = false): Promise<ResolvedAgent> {
     if (explicit && explicit !== autoAgent) return { agent: this.profile(explicit).name, routed: null, by: 'fixed' }
     const ctx = { text, workspace }
-    let routed = route(this.repo.routing, ctx)
+    let routed = needsVision ? null : route(this.repo.routing, ctx)
     if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'rule' }
     let intent = classifyIntent(text, this.repo.routing.intents)
     if (intent === null && this.repo.routing.classifier && text.trim()) {
       intent = await this.classify(text)
-      if (intent) routed = route(this.repo.routing, ctx, intent)
+      if (intent && !needsVision) routed = route(this.repo.routing, ctx, intent)
       if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'classifier' }
     }
-    const scored = this.scoreFor(intent, text)
+    const scored = this.scoreFor(intent, text, undefined, needsVision)
     if (scored.chosen) return { agent: this.profile(scored.chosen.agent).name, routed: null, by: 'score', intent, ranking: scored.ranking }
     if (this.repo.routing.default_agent) return { agent: this.profile(this.repo.routing.default_agent).name, routed: null, by: 'default', intent, ranking: scored.ranking }
     throw new Error('nenhuma regra casou, nenhum agente pontuou e nao ha default_agent em routing.json')
@@ -299,7 +301,7 @@ export class Runtime {
   }
 
   /** Ranking deterministico de custo x capacidade entre os perfis com capacidade declarada para a intencao. */
-  scoreFor(intent: string | null, text: string, at?: Date): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
+  scoreFor(intent: string | null, text: string, at?: Date, needsVision = false): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
     const scoring = this.repo.routing.scoring
     if (!scoring) return { chosen: null, ranking: [] }
     const candidates: ScoreCandidate[] = [...this.repo.profiles.values()].map((p) => ({
@@ -310,10 +312,12 @@ export class Runtime {
       maxPromptTokens: p.routing.max_prompt_tokens,
       contextWindow: p.context.window,
       maxOutput: p.max_output,
+      vision: p.routing.vision,
     }))
     return scoreAgents(candidates, (provider, model) => this.priceOrNull(provider, model, at), scoring, {
       intent,
       promptTokens: approxTokens(text),
+      needsVision,
       unavailable: (name) => this.unavailableReason(name),
       adjustments: this.feedbackAdjustments(intent),
     })
@@ -510,7 +514,7 @@ export class Runtime {
     const runId = req.runId ?? randomUUID()
     const chosen = req.agentOverride
       ? { agent: this.profile(req.agentOverride).name, routed: null, by: 'override' as const }
-      : await this.resolveAgent(session.agent, req.text, session.workspace)
+      : await this.resolveAgent(session.agent, req.text, session.workspace, (req.images?.length ?? 0) > 0)
     const base = this.profile(chosen.agent)
     this.db
       .prepare('INSERT OR REPLACE INTO runs (run_id, session_id, agent, intent, routed_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
@@ -574,7 +578,7 @@ export class Runtime {
       signal: req.signal,
     })
     try {
-      const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text, parentRunId })
+      const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text, images: req.images, parentRunId })
       this.store.appendMessages(req.sessionId, runId, result.appended)
       if (history.length === 0) this.store.touch(req.sessionId, titleFrom(req.text))
       return result
@@ -834,6 +838,7 @@ function renderForSummary(m: Message): string {
   const parts = m.parts.map((p) => {
     if (p.type === 'text') return p.text
     if (p.type === 'tool_call') return `[chamou ${p.name} ${JSON.stringify(p.args ?? {}).slice(0, 200)}]`
+    if (p.type === 'image') return `[imagem ${p.name ?? p.mediaType}]`
     return `[resultado${p.isError ? ' com erro' : ''}: ${p.content.slice(0, 300)}]`
   })
   return `${m.role}: ${parts.join(' ')}`

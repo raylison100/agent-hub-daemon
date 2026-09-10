@@ -208,7 +208,8 @@ program
   .command('route <texto>')
   .description('Mostra a decisao do roteador para um pedido, com o ranking custo x capacidade, sem gastar tokens')
   .option('--at <iso>', 'simula outro instante para o preco por horario, ex.: 2026-09-14T02:30:00Z')
-  .action((texto: string, opts: { at?: string }) => {
+  .option('--imagem', 'simula um pedido com imagem anexada, que exige agente com visao')
+  .action((texto: string, opts: { at?: string; imagem?: boolean }) => {
     const runtime = new Runtime(loadConfig())
     const at = opts.at ? new Date(opts.at) : undefined
     if (at && Number.isNaN(at.getTime())) throw new Error(`instante invalido: ${opts.at}`)
@@ -216,10 +217,10 @@ program
     const stale = runtime.pricingStaleness()
     if (stale) console.error(`aviso: ${stale}`)
     const intent = classifyIntent(texto, runtime.repo.routing.intents)
-    const ruled = route(runtime.repo.routing, { text: texto, workspace: process.cwd() })
+    const ruled = opts.imagem ? null : route(runtime.repo.routing, { text: texto, workspace: process.cwd() })
     console.log(`intencao por palavra chave: ${intent ?? 'nenhuma'}`)
     if (ruled) console.log(`regra: ${JSON.stringify(ruled.rule.when)} -> ${ruled.agent}`)
-    const scored = runtime.scoreFor(intent, texto, at)
+    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true)
     if (scored.ranking.length === 0) {
       console.log('pontuacao desligada: sem bloco scoring em routing.json')
       return

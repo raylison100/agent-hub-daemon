@@ -162,7 +162,7 @@ export class ConnectionHub {
         send({ type: 'sync', session_id: frame.session_id, events: runtime.store.eventsSince(frame.session_id, frame.since_seq) })
         return
       case 'run.start':
-        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve)
+        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve, frame.images)
         return
       case 'cost.status': {
         const s = runtime.costStatus()
@@ -356,6 +356,7 @@ export class ConnectionHub {
     reasoning?: 'low' | 'medium' | 'high' | 'max',
     agent?: string,
     improve?: boolean,
+    images?: { media_type: string; data: string; name?: string }[],
   ): void {
     const runtime = this.runtime
     const runId = randomUUID()
@@ -376,6 +377,7 @@ export class ConnectionHub {
         reasoningOverride: reasoning,
         agentOverride: agent && agent !== autoAgent ? agent : undefined,
         improve,
+        images: images?.map((i) => ({ mediaType: i.media_type, data: i.data, name: i.name })),
         emit: (event) => {
           const seq = runtime.store.appendEvent(sessionId, runId, event)
           this.broadcast({ type: 'event', session_id: sessionId, run_id: runId, seq, event })
