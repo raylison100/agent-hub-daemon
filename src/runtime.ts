@@ -17,6 +17,7 @@ import {
   createAdapter,
   defaultPolicy,
   gitPluginDir,
+  isDestructive,
   loadAgentsRepo,
   messageText,
   nativeTools,
@@ -476,7 +477,7 @@ export class Runtime {
   }
 
   private async ask(req: RunRequest, runId: string, call: ToolCallPart, def: ToolDefinition): Promise<ApprovalDecision> {
-    if (req.autoApprove) {
+    if (req.autoApprove && !isDestructive((call.args ?? {}) as Record<string, unknown>)) {
       this.store.recordToolEvent({ sessionId: req.sessionId, runId, name: def.name, args: call.args, decision: 'auto_approved' })
       return 'allow'
     }

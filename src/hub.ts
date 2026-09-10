@@ -1,5 +1,5 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { protocolVersion, type ClientFrame, type ServerFrame } from '@agent-hub/core'
+import { protocolVersion, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
 import { draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
@@ -250,7 +250,7 @@ export class ConnectionHub {
     sessionId: string,
     text: string,
     send: (f: ServerFrame) => void,
-    mode: 'normal' | 'draft' | 'auto_approve' = 'normal',
+    mode: RunMode = 'normal',
     reasoning?: 'low' | 'medium' | 'high' | 'max',
   ): void {
     const runtime = this.runtime
@@ -258,13 +258,16 @@ export class ConnectionHub {
     const controller = new AbortController()
     this.runs.set(runId, controller)
     send({ type: 'run.started', run_id: runId, session_id: sessionId })
+    const session = runtime.store.get(sessionId)
+    const base = session ? runtime.policyFor(runtime.profile(session.agent)) : draftPolicy
+    const policyOverride = mode === 'draft' ? draftPolicy : mode === 'accept_edits' ? { ...base, read: 'allow' as const, write: 'allow' as const } : undefined
     void runtime
       .run({
         sessionId,
         text,
         runId,
         signal: controller.signal,
-        policyOverride: mode === 'draft' ? draftPolicy : undefined,
+        policyOverride,
         autoApprove: mode === 'auto_approve',
         reasoningOverride: reasoning,
         emit: (event) => {
