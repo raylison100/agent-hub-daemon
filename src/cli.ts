@@ -3,6 +3,7 @@ import { Command } from 'commander'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
+import { classifyIntent, route } from '@agent-hub/core'
 import type { ReportGroup, RunEvent } from '@agent-hub/core'
 import type { PendingApproval } from './approvals.js'
 import { AutomationRunner } from './automation.js'
@@ -199,6 +200,28 @@ program
     const runtime = new Runtime(loadConfig())
     for (const a of runtime.agents()) console.log(`${a.name}\t${a.provider}/${a.model}\t${a.reasoning}\t${a.description}`)
     reportErrors(runtime)
+  })
+
+program
+  .command('route <texto>')
+  .description('Mostra a decisao do roteador para um pedido, com o ranking custo x capacidade, sem gastar tokens')
+  .action((texto: string) => {
+    const runtime = new Runtime(loadConfig())
+    const intent = classifyIntent(texto, runtime.repo.routing.intents)
+    const ruled = route(runtime.repo.routing, { text: texto, workspace: process.cwd() })
+    console.log(`intencao por palavra chave: ${intent ?? 'nenhuma'}`)
+    if (ruled) console.log(`regra: ${JSON.stringify(ruled.rule.when)} -> ${ruled.agent}`)
+    const scored = runtime.scoreFor(intent, texto)
+    if (scored.ranking.length === 0) {
+      console.log('pontuacao desligada: sem bloco scoring em routing.json')
+      return
+    }
+    console.log(['agente', 'pontos', 'capacidade', 'usd/M', 'situacao'].join('	'))
+    for (const r of scored.ranking) {
+      console.log([r.agent, r.score.toFixed(4), r.capability.toFixed(2), r.costPerMillion.toFixed(2), r.excluded ?? (r.agent === scored.chosen?.agent && !ruled ? 'escolhido' : 'apto')].join('	'))
+    }
+    if (ruled) console.log(`decisao final: ${ruled.agent} (regra vence a pontuacao)`)
+    else console.log(`decisao final: ${scored.chosen?.agent ?? runtime.repo.routing.default_agent ?? 'nenhum'}`)
   })
 
 program

@@ -12,6 +12,8 @@ import {
   Redactor,
   ToolRegistry,
   activatedSkills,
+  apiKeyEnv,
+  approxTokens,
   budgetFor,
   classifierPrompt,
   createAdapter,
@@ -22,8 +24,10 @@ import {
   loadAgentsRepo,
   messageText,
   nativeTools,
+  classifyIntent,
   parseClassifierAnswer,
   route,
+  scoreAgents,
   type AgentProfile,
   type AgentSummary,
   type AgentsRepo,
@@ -33,8 +37,11 @@ import {
   type DelegationResult,
   type Message,
   type Policy,
+  type RoutedBy,
   type RouteResult,
   type RunEvent,
+  type ScoreCandidate,
+  type ScoredAgent,
   type RunResult,
   type Summarizer,
   type ToolCallPart,
@@ -84,6 +91,25 @@ export const draftPolicy: Policy = { read: 'allow', write: 'deny', exec: 'deny' 
 const summarySystem =
   'Voce resume conversas entre um usuario e um agente de programacao. Preserve decisoes tomadas, arquivos tocados, ' +
   'erros encontrados e o que ainda falta. Sem introducao, sem opiniao, em topicos curtos.'
+
+export interface ResolvedAgent {
+  agent: string
+  routed: RouteResult | null
+  by: RoutedBy
+  intent?: string | null
+  ranking?: ScoredAgent[]
+}
+
+/** Texto curto do motivo da escolha do agente para o evento `routed`. */
+function routedReason(chosen: ResolvedAgent): string {
+  if (chosen.routed) return `regra ${JSON.stringify(chosen.routed.rule.when)}`
+  if (chosen.by === 'score') {
+    const top = chosen.ranking?.find((r) => r.agent === chosen.agent)
+    return top ? `pontuacao ${top.score} (capacidade ${top.capability}, custo ${top.costPerMillion.toFixed(2)} USD/M)` : 'pontuacao'
+  }
+  if (chosen.by === 'default') return 'default_agent do routing.json'
+  return chosen.by
+}
 
 export class Runtime {
   readonly db: DatabaseType
@@ -177,19 +203,66 @@ export class Runtime {
     return policy
   }
 
-  /** Escolhe o agente: explicito vence; depois regras por palavra chave; classificador por modelo; por fim o `default_agent`. `auto` significa decidir a cada mensagem. */
-  async resolveAgent(explicit: string | undefined, text: string, workspace: string): Promise<{ agent: string; routed: RouteResult | null; by: 'fixed' | 'rule' | 'classifier' | 'default' }> {
+  /** Escolhe o agente: explicito vence; depois regras por palavra chave; classificador por modelo; pontuacao custo x capacidade; por fim o `default_agent`. `auto` significa decidir a cada mensagem. */
+  async resolveAgent(explicit: string | undefined, text: string, workspace: string): Promise<ResolvedAgent> {
     if (explicit && explicit !== autoAgent) return { agent: this.profile(explicit).name, routed: null, by: 'fixed' }
     const ctx = { text, workspace }
     let routed = route(this.repo.routing, ctx)
     if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'rule' }
-    if (this.repo.routing.classifier && text.trim()) {
-      const intent = await this.classify(text)
+    let intent = classifyIntent(text, this.repo.routing.intents)
+    if (intent === null && this.repo.routing.classifier && text.trim()) {
+      intent = await this.classify(text)
       if (intent) routed = route(this.repo.routing, ctx, intent)
       if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'classifier' }
     }
-    if (this.repo.routing.default_agent) return { agent: this.profile(this.repo.routing.default_agent).name, routed: null, by: 'default' }
-    throw new Error('nenhuma regra de roteamento casou e nao ha default_agent em routing.json')
+    const scored = this.scoreFor(intent, text)
+    if (scored.chosen) return { agent: this.profile(scored.chosen.agent).name, routed: null, by: 'score', intent, ranking: scored.ranking }
+    if (this.repo.routing.default_agent) return { agent: this.profile(this.repo.routing.default_agent).name, routed: null, by: 'default', intent, ranking: scored.ranking }
+    throw new Error('nenhuma regra casou, nenhum agente pontuou e nao ha default_agent em routing.json')
+  }
+
+  /** Ranking deterministico de custo x capacidade entre os perfis com capacidade declarada para a intencao. */
+  scoreFor(intent: string | null, text: string): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
+    const scoring = this.repo.routing.scoring
+    if (!scoring) return { chosen: null, ranking: [] }
+    const candidates: ScoreCandidate[] = [...this.repo.profiles.values()].map((p) => ({
+      name: p.name,
+      provider: p.provider,
+      model: p.model,
+      capabilities: p.routing.capabilities,
+      maxPromptTokens: p.routing.max_prompt_tokens,
+      contextWindow: p.context.window,
+      maxOutput: p.max_output,
+    }))
+    return scoreAgents(candidates, (provider, model) => this.priceOrNull(provider, model), scoring, {
+      intent,
+      promptTokens: approxTokens(text),
+      unavailable: (name) => this.unavailableReason(name),
+    })
+  }
+
+  private priceOrNull(provider: string, model: string): ReturnType<Pricing['resolve']> | null {
+    try {
+      return this.pricing.resolve(provider, model)
+    } catch {
+      return null
+    }
+  }
+
+  /** Motivo pelo qual um agente nao pode receber runs agora: chave ausente ou limite diario estourado. */
+  private unavailableReason(name: string): string | null {
+    const profile = this.repo.profiles.get(name)
+    if (!profile) return 'perfil nao carregado'
+    const keyEnv = apiKeyEnv(profile)
+    if (keyEnv && !process.env[keyEnv]) return `sem chave ${keyEnv}`
+    const dayLimit = this.repo.budgets.agents[name]?.day_usd
+    if (dayLimit !== undefined && dayLimit > 0) {
+      const day = new Date()
+      day.setHours(0, 0, 0, 0)
+      const spent = this.ledger.report('agent', { since: day.getTime() }).find((r) => r.key === name)?.costUsd ?? 0
+      if (spent >= dayLimit) return `limite diario de ${dayLimit} USD atingido`
+    }
+    return null
   }
 
   /** Reescreve o pedido do usuario para o agente alvo com o modelo barato de `prompt_improver`, lancando o custo na sessao. */
@@ -325,8 +398,9 @@ export class Runtime {
         agent: base.name,
         model: `${base.provider}/${base.model}`,
         by: chosen.by,
-        intent: chosen.routed?.intent ?? null,
-        reason: chosen.routed ? `regra ${JSON.stringify(chosen.routed.rule.when)}` : chosen.by === 'default' ? 'default_agent do routing.json' : chosen.by,
+        intent: chosen.routed?.intent ?? chosen.intent ?? null,
+        reason: routedReason(chosen),
+        ranking: chosen.ranking,
       })
     }
     if (req.improve) {
