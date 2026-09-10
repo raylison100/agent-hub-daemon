@@ -284,8 +284,16 @@ export class Runtime {
     throw new Error('nenhuma regra casou, nenhum agente pontuou e nao ha default_agent em routing.json')
   }
 
+  /** Aviso quando a tabela de precos esta velha; precos de provedor mudam e a tabela e atualizada a mao. */
+  pricingStaleness(maxDays = 30): string | null {
+    const age = this.pricing.ageDays()
+    if (age === null) return `tabela de precos com version "${this.pricing.version}" sem data; use YYYY-MM-DD para o aviso de idade funcionar`
+    if (age > maxDays) return `tabela de precos de ${this.pricing.version} (${age} dias): confira os precos nos sites dos provedores e atualize agents/pricing.json`
+    return null
+  }
+
   /** Ranking deterministico de custo x capacidade entre os perfis com capacidade declarada para a intencao. */
-  scoreFor(intent: string | null, text: string): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
+  scoreFor(intent: string | null, text: string, at?: Date): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
     const scoring = this.repo.routing.scoring
     if (!scoring) return { chosen: null, ranking: [] }
     const candidates: ScoreCandidate[] = [...this.repo.profiles.values()].map((p) => ({
@@ -297,7 +305,7 @@ export class Runtime {
       contextWindow: p.context.window,
       maxOutput: p.max_output,
     }))
-    return scoreAgents(candidates, (provider, model) => this.priceOrNull(provider, model), scoring, {
+    return scoreAgents(candidates, (provider, model) => this.priceOrNull(provider, model, at), scoring, {
       intent,
       promptTokens: approxTokens(text),
       unavailable: (name) => this.unavailableReason(name),
@@ -346,9 +354,9 @@ export class Runtime {
   }
 
   /** Preco efetivo agora, com o desconto fora de pico do provedor aplicado, para a pontuacao refletir o custo real do momento. */
-  private priceOrNull(provider: string, model: string): ReturnType<Pricing['resolve']> | null {
+  private priceOrNull(provider: string, model: string, at?: Date): ReturnType<Pricing['resolve']> | null {
     try {
-      return this.pricing.effective(provider, model)
+      return this.pricing.effective(provider, model, at)
     } catch {
       return null
     }

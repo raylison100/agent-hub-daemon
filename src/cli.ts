@@ -60,6 +60,8 @@ program
     console.log(`daemon em ws://${config.host}:${config.port}/ws (dispositivo ${config.deviceName})`)
     if (config.relayUrl) console.log(`relay configurado: ${config.relayUrl}`)
     console.log(`agentes: ${runtime.agents().map((a) => a.name).join(', ') || 'nenhum'}`)
+    const stale = runtime.pricingStaleness()
+    if (stale) console.error(`aviso: ${stale}`)
     const stop = async () => {
       await server.close()
       process.exit(0)
@@ -205,13 +207,19 @@ program
 program
   .command('route <texto>')
   .description('Mostra a decisao do roteador para um pedido, com o ranking custo x capacidade, sem gastar tokens')
-  .action((texto: string) => {
+  .option('--at <iso>', 'simula outro instante para o preco por horario, ex.: 2026-09-14T02:30:00Z')
+  .action((texto: string, opts: { at?: string }) => {
     const runtime = new Runtime(loadConfig())
+    const at = opts.at ? new Date(opts.at) : undefined
+    if (at && Number.isNaN(at.getTime())) throw new Error(`instante invalido: ${opts.at}`)
+    if (at) console.log(`simulando o instante ${at.toISOString()}`)
+    const stale = runtime.pricingStaleness()
+    if (stale) console.error(`aviso: ${stale}`)
     const intent = classifyIntent(texto, runtime.repo.routing.intents)
     const ruled = route(runtime.repo.routing, { text: texto, workspace: process.cwd() })
     console.log(`intencao por palavra chave: ${intent ?? 'nenhuma'}`)
     if (ruled) console.log(`regra: ${JSON.stringify(ruled.rule.when)} -> ${ruled.agent}`)
-    const scored = runtime.scoreFor(intent, texto)
+    const scored = runtime.scoreFor(intent, texto, at)
     if (scored.ranking.length === 0) {
       console.log('pontuacao desligada: sem bloco scoring em routing.json')
       return
@@ -221,8 +229,8 @@ program
       console.log([r.agent, r.score.toFixed(4), `${r.capability.toFixed(2)}${r.adjustment !== 0 ? ` (${r.adjustment > 0 ? '+' : ''}${r.adjustment} aprendido)` : ''}`, r.costPerMillion.toFixed(2), r.excluded ?? (r.agent === scored.chosen?.agent && !ruled ? 'escolhido' : 'apto')].join('	'))
     }
     for (const p of runtime.repo.profiles.values()) {
-      const m = runtime.pricing.multiplierAt(p.provider, p.model)
-      if (m !== 1) console.log(`nota: ${p.name} (${p.provider}/${p.model}) fora de pico agora, custo x${m}`)
+      const m = runtime.pricing.multiplierAt(p.provider, p.model, at)
+      if (m !== 1) console.log(`nota: ${p.name} (${p.provider}/${p.model}) fora de pico ${at ? 'no instante simulado' : 'agora'}, custo x${m}`)
     }
     if (ruled) console.log(`decisao final: ${ruled.agent} (regra vence a pontuacao)`)
     else console.log(`decisao final: ${scored.chosen?.agent ?? runtime.repo.routing.default_agent ?? 'nenhum'}`)
@@ -263,6 +271,8 @@ program
   .option('-s, --since <period>', 'today | week | month | all', 'month')
   .action((opts: { group: string; since: string }) => {
     const runtime = new Runtime(loadConfig())
+    const stale = runtime.pricingStaleness()
+    if (stale) console.error(`aviso: ${stale}`)
     const rows = runtime.ledger.report(opts.group as ReportGroup, { since: sinceOf(opts.since) })
     if (rows.length === 0) {
       console.log('sem registros no periodo')
