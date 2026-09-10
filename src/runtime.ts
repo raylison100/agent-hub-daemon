@@ -384,6 +384,7 @@ export class Runtime {
       reasoning: 'low',
       systemCacheTtl: '5m',
       providerOptions: improver.provider_options,
+      signal: AbortSignal.timeout(cfg.timeout_ms),
     })
     const costUsd = this.pricing.cost(adapter.provider, result.model, result.usage)
     this.ledger.record({
@@ -466,7 +467,7 @@ export class Runtime {
   assertWorkspace(dir: string): string {
     const target = resolve(dir)
     const allowed = this.config.workspaces.some((w) => target === w || target.startsWith(w + sep))
-    if (!allowed) throw new Error(`workspace nao permitido: ${target}. Adicione em workspaces no config.toml`)
+    if (!allowed) throw new Error(`workspace nao permitido: ${dir} (resolvido para ${target}). Adicione em workspaces no config.toml`)
     if (!existsSync(target)) throw new Error(`workspace nao existe: ${target}`)
     return target
   }
@@ -721,8 +722,24 @@ export class Runtime {
     }
   }
 
+  /** Aprova sozinho quando o run nasceu automatico ou quando a sessao foi trocada para o modo automatico no meio do run. */
+  private autoApproves(req: RunRequest): boolean {
+    return req.autoApprove === true || this.store.get(req.sessionId)?.mode === 'auto_approve'
+  }
+
+  /** Troca de modo para automatico no meio do run: aprova o que ja esta pendente na sessao, exceto destrutivos. */
+  flushApprovals(sessionId: string): string[] {
+    const resolved: string[] = []
+    for (const info of this.approvals.list()) {
+      if (info.sessionId !== sessionId) continue
+      if (isDestructive((info.args ?? {}) as Record<string, unknown>)) continue
+      if (this.approvals.respond(info.id, 'allow')) resolved.push(info.id)
+    }
+    return resolved
+  }
+
   private async ask(req: RunRequest, runId: string, call: ToolCallPart, def: ToolDefinition): Promise<ApprovalDecision> {
-    if (req.autoApprove && !isDestructive((call.args ?? {}) as Record<string, unknown>)) {
+    if (this.autoApproves(req) && !isDestructive((call.args ?? {}) as Record<string, unknown>)) {
       this.store.recordToolEvent({ sessionId: req.sessionId, runId, name: def.name, args: call.args, decision: 'auto_approved' })
       return 'allow'
     }

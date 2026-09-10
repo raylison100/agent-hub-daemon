@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import type { Ledger, Message, RunEvent, SessionSummary } from '@agent-hub/core'
+import type { Ledger, Message, RunEvent, RunMode, SessionSummary } from '@agent-hub/core'
 
 interface SessionRow {
   id: string
@@ -10,6 +10,7 @@ interface SessionRow {
   origin: string
   pinned: number
   archived: number
+  mode: string
   created_at: number
   updated_at: number
 }
@@ -62,7 +63,8 @@ export class SessionStore {
   }
 
   /** Renomeia, fixa ou arquiva sem mexer em `updated_at`, para nao reordenar a lista. */
-  update(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; agent?: string }): SessionSummary | undefined {
+  update(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; agent?: string; mode?: RunMode }): SessionSummary | undefined {
+    if (patch.mode !== undefined) this.db.prepare('UPDATE sessions SET mode = ? WHERE id = ?').run(patch.mode, id)
     if (patch.title !== undefined) this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(patch.title.trim().slice(0, 120) || 'Sem titulo', id)
     if (patch.agent !== undefined) this.db.prepare('UPDATE sessions SET agent = ? WHERE id = ?').run(patch.agent, id)
     if (patch.pinned !== undefined) this.db.prepare('UPDATE sessions SET pinned = ? WHERE id = ?').run(patch.pinned ? 1 : 0, id)
@@ -181,6 +183,7 @@ export class SessionStore {
       title: row.title,
       origin: row.origin,
       pinned: row.pinned === 1,
+      mode: (row.mode ?? 'normal') as RunMode,
       archived: row.archived === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

@@ -112,8 +112,11 @@ export class ConnectionHub {
         return
       case 'session.update': {
         const agent = frame.agent === undefined ? undefined : frame.agent === autoAgent ? autoAgent : runtime.profile(frame.agent).name
-        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived, agent })
+        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived, agent, mode: frame.mode })
         if (!session) throw new Error('sessao nao encontrada')
+        if (frame.mode === 'auto_approve') {
+          for (const id of runtime.flushApprovals(frame.session_id)) this.broadcast({ type: 'approval.resolved', approval_id: id, decision: 'allow' })
+        }
         this.broadcast({ type: 'session.updated', session })
         return
       }
@@ -342,6 +345,7 @@ export class ConnectionHub {
     const controller = new AbortController()
     this.runs.set(runId, controller)
     send({ type: 'run.started', run_id: runId, session_id: sessionId })
+    runtime.store.update(sessionId, { mode })
     const policyOverride = mode === 'draft' ? draftPolicy : mode === 'accept_edits' ? { read: 'allow' as const, write: 'allow' as const, exec: 'ask' as const } : undefined
     void runtime
       .run({
