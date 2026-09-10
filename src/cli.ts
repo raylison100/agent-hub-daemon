@@ -220,6 +220,10 @@ program
     for (const r of scored.ranking) {
       console.log([r.agent, r.score.toFixed(4), `${r.capability.toFixed(2)}${r.adjustment !== 0 ? ` (${r.adjustment > 0 ? '+' : ''}${r.adjustment} aprendido)` : ''}`, r.costPerMillion.toFixed(2), r.excluded ?? (r.agent === scored.chosen?.agent && !ruled ? 'escolhido' : 'apto')].join('	'))
     }
+    for (const p of runtime.repo.profiles.values()) {
+      const m = runtime.pricing.multiplierAt(p.provider, p.model)
+      if (m !== 1) console.log(`nota: ${p.name} (${p.provider}/${p.model}) fora de pico agora, custo x${m}`)
+    }
     if (ruled) console.log(`decisao final: ${ruled.agent} (regra vence a pontuacao)`)
     else console.log(`decisao final: ${scored.chosen?.agent ?? runtime.repo.routing.default_agent ?? 'nenhum'}`)
   })

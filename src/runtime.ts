@@ -345,9 +345,10 @@ export class Runtime {
     return rows.map((r) => ({ ...r, delta: cfg ? feedbackDelta(r.good, r.bad, cfg) : 0 }))
   }
 
+  /** Preco efetivo agora, com o desconto fora de pico do provedor aplicado, para a pontuacao refletir o custo real do momento. */
   private priceOrNull(provider: string, model: string): ReturnType<Pricing['resolve']> | null {
     try {
-      return this.pricing.resolve(provider, model)
+      return this.pricing.effective(provider, model)
     } catch {
       return null
     }
