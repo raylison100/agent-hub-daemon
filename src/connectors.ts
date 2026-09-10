@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { McpFileSchema, type McpServerConfig } from '@agent-hub/core'
@@ -148,4 +148,42 @@ export function claudeCodeServers(): Record<string, RawServer> {
     }
   }
   return out
+}
+
+/** Agentes que declaram um servidor MCP hoje. */
+export function agentsUsing(agentsDir: string, server: string): string[] {
+  return profileFiles(agentsDir)
+    .filter(({ servers }) => servers.includes(server))
+    .map(({ name }) => name)
+}
+
+/** Reescreve a linha `mcp: [...]` do perfil, que e a lista de servidores que o agente enxerga. */
+export function setAgentServers(agentsDir: string, agent: string, servers: string[]): void {
+  const file = join(agentsDir, 'profiles', `${agent}.md`)
+  if (!existsSync(file)) throw new Error(`perfil nao encontrado: ${agent}`)
+  const text = readFileSync(file, 'utf8')
+  const linha = /^(\s*)mcp:\s*\[[^\]]*\]\s*$/m
+  if (!linha.test(text)) throw new Error(`perfil ${agent} sem a linha mcp: [] em tools`)
+  writeFileSync(file, text.replace(linha, (_m, espaco: string) => `${espaco}mcp: [${servers.join(', ')}]`))
+}
+
+function profileFiles(agentsDir: string): { name: string; servers: string[] }[] {
+  const dir = join(agentsDir, 'profiles')
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => {
+      const text = readFileSync(join(dir, f), 'utf8')
+      const match = /^\s*mcp:\s*\[([^\]]*)\]\s*$/m.exec(text)
+      const servers = (match?.[1] ?? '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean)
+      return { name: f.replace(/\.md$/, ''), servers }
+    })
+}
+
+/** Servidores MCP declarados por um agente. */
+export function profileServers(agentsDir: string, agent: string): string[] {
+  return profileFiles(agentsDir).find((p) => p.name === agent)?.servers ?? []
 }

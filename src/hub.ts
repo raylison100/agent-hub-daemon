@@ -2,7 +2,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { protocolVersion, resolveInside, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
-import { addServers, claudeCodeServers, parseServers, removeServer, setEnabled } from './connectors.js'
+import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
@@ -256,6 +256,21 @@ export class ConnectionHub {
         this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
         return
       }
+      case 'mcp.agents': {
+        const dir = runtime.config.agentsDir
+        for (const profile of runtime.repo.profiles.keys()) {
+          const atual = agentsUsing(dir, frame.name)
+          const querUsar = frame.agents.includes(profile)
+          if (atual.includes(profile) === querUsar) continue
+          const servers = new Set(profileServers(dir, profile))
+          if (querUsar) servers.add(frame.name)
+          else servers.delete(frame.name)
+          setAgentServers(dir, profile, [...servers])
+        }
+        runtime.reload()
+        send({ type: 'mcp.agents', name: frame.name, agents: agentsUsing(dir, frame.name) })
+        return
+      }
       case 'mcp.remove': {
         await runtime.mcp.close(frame.name)
         if (!removeServer(runtime.config.agentsDir, frame.name)) throw new Error(`servidor nao encontrado: ${frame.name}`)
@@ -381,6 +396,7 @@ export class ConnectionHub {
       url: cfg.url ?? null,
       tools: this.runtime.registry.names().filter((t) => t.startsWith(`${name}__`)).length,
       error: this.mcpErrors.get(name) ?? null,
+      agents: agentsUsing(this.runtime.config.agentsDir, name),
     }))
   }
 
