@@ -27,6 +27,7 @@ import {
   type AgentsRepo,
   type Budget,
   type BudgetScope,
+  type DelegationOptions,
   type DelegationResult,
   type Message,
   type Policy,
@@ -47,6 +48,16 @@ import { PushService } from './push.js'
 import { SecretStore } from './secrets.js'
 import { SessionStore } from './store.js'
 import { Webhooks } from './webhooks.js'
+import { createWorktree, isGitRepo } from './worktrees.js'
+
+interface SpawnedTask {
+  taskId: string
+  runId: string
+  agent: string
+  promise: Promise<DelegationResult>
+  result?: DelegationResult
+  collected: boolean
+}
 
 export interface RunRequest {
   sessionId: string
@@ -76,6 +87,7 @@ export class Runtime {
   readonly mcp = new McpBridge()
   readonly approvals = new ApprovalQueue()
   private readonly activeBudgets = new Map<string, Budget>()
+  private readonly spawned = new Map<string, Map<string, SpawnedTask>>()
   readonly hooks = new Webhooks([], process.env, (m) => console.error(m))
   readonly otel: OtelExporter | null
   readonly push: PushService
@@ -291,7 +303,10 @@ export class Runtime {
       summarize: this.summarizerFor(profile, req.sessionId, runId),
       redact: (text) => this.redactor.redact(text),
       preloadSkills: activatedSkills(this.repo.skills, profile.skills, { text: req.text, workspace }, this.repo.routing.intents),
-      delegate: (agent, task) => this.delegate(req, workspace, runId, agent, task),
+      delegate: (agent, task, opts) => this.delegate(req, workspace, runId, agent, task, undefined, opts),
+      spawn: (agent, task, opts) => this.spawn(req, workspace, runId, agent, task, opts),
+      collect: (taskId, wait) => this.collect(runId, taskId, wait),
+      pendingSpawns: () => [...(this.spawned.get(runId)?.values() ?? [])].filter((t) => !t.collected).length,
       hooks: this.hookRunner,
       sandbox: profile.sandbox,
       signal: req.signal,
@@ -303,7 +318,42 @@ export class Runtime {
       return result
     } finally {
       this.activeBudgets.delete(runId)
+      this.spawned.delete(runId)
     }
+  }
+
+  /** Inicia um subagente sem esperar. O resultado fica guardado ate o pai chamar collect. */
+  private async spawn(req: RunRequest, workspace: string, parentRunId: string, agent: string, task: string, opts: DelegationOptions): Promise<{ taskId: string; runId: string }> {
+    const runId = randomUUID()
+    const taskId = runId.slice(0, 8)
+    const entry: SpawnedTask = { taskId, runId, agent, promise: Promise.resolve({ text: '', costUsd: 0, runId, stop: 'error' }), collected: false }
+    let tasks = this.spawned.get(parentRunId)
+    if (!tasks) {
+      tasks = new Map()
+      this.spawned.set(parentRunId, tasks)
+    }
+    tasks.set(taskId, entry)
+    entry.promise = this.delegate(req, workspace, parentRunId, agent, task, undefined, { ...opts, taskId, runId, background: true }).then(
+      (r) => {
+        entry.result = { ...r, taskId, agent }
+        return entry.result
+      },
+      (err: unknown) => {
+        entry.result = { text: err instanceof Error ? err.message : String(err), costUsd: 0, runId, stop: 'error', taskId, agent }
+        return entry.result
+      },
+    )
+    return { taskId, runId }
+  }
+
+  private async collect(parentRunId: string, taskId: string | undefined, wait: boolean): Promise<DelegationResult[]> {
+    const tasks = this.spawned.get(parentRunId)
+    if (!tasks) return []
+    const wanted = [...tasks.values()].filter((t) => !t.collected && (taskId === undefined || t.taskId === taskId))
+    if (wait) await Promise.all(wanted.map((t) => t.promise))
+    const ready = wanted.filter((t) => t.result !== undefined)
+    for (const t of ready) t.collected = true
+    return ready.map((t) => t.result!)
   }
 
   /** Run isolado de um perfil (sem historico) dentro de uma sessao, usado por workflows. Devolve o texto final e o custo. */
@@ -327,12 +377,28 @@ export class Runtime {
     return this.ask(req, runId, { type: 'tool_call', id: randomUUID(), name: def.name, args }, def)
   }
 
-  /** Run filho com outro perfil, sem historico da sessao, custo lancado na mesma sessao sob o run pai. */
-  private async delegate(req: RunRequest, workspace: string, parentRunId: string, agent: string, task: string, override?: AgentProfile): Promise<DelegationResult & { error?: string }> {
+  /** Run filho com outro perfil, sem historico da sessao, custo lancado na mesma sessao sob o run pai. Com worktree, edita em copia isolada. */
+  private async delegate(
+    req: RunRequest,
+    workspace: string,
+    parentRunId: string,
+    agent: string,
+    task: string,
+    override?: AgentProfile,
+    opts: DelegationOptions & { taskId?: string; runId?: string; background?: boolean } = {},
+  ): Promise<DelegationResult & { error?: string }> {
     const child = override ?? this.profile(agent)
     await this.ensureMcp(child)
     const adapter = createAdapter(child)
-    const runId = randomUUID()
+    const runId = opts.runId ?? randomUUID()
+    let worktree: { path: string; branch: string } | undefined
+    let childWorkspace = workspace
+    if (opts.worktree) {
+      if (!isGitRepo(workspace)) throw new Error('worktree exige que o workspace seja um repositorio git')
+      worktree = createWorktree(this.config.home, workspace, runId)
+      childWorkspace = worktree.path
+    }
+    req.emit({ type: 'delegation', phase: 'start', agent: child.name, runId, task, taskId: opts.taskId, background: opts.background, worktree })
     const agentDay = this.repo.budgets.agents[child.name]?.day_usd
     const budget = budgetFor(this.ledger, child, { runId, sessionId: req.sessionId }, agentDay, this.repo.budgets.global_month_usd)
     this.activeBudgets.set(runId, budget)
@@ -346,7 +412,7 @@ export class Runtime {
       pricing: this.pricing,
       ledger: this.ledger,
       budget,
-      workspace,
+      workspace: childWorkspace,
       approve: (call, def) => this.ask(req, runId, call, def),
       emit: (event) => {
         if (event.type === 'text_delta') text.push(event.delta)
@@ -361,7 +427,12 @@ export class Runtime {
       const result = await runner.run({ runId, sessionId: req.sessionId, history: [], userText: task, parentRunId })
       this.store.appendMessages(req.sessionId, runId, result.appended)
       const last = [...result.appended].reverse().find((m) => m.role === 'assistant')
-      return { text: (last ? messageText(last) : text.join('')) || text.join(''), costUsd: result.costUsd, runId, stop: result.stop, error: result.error }
+      const out = { text: (last ? messageText(last) : text.join('')) || text.join(''), costUsd: result.costUsd, runId, stop: result.stop, error: result.error, worktree, taskId: opts.taskId, agent: child.name }
+      req.emit({ type: 'delegation', phase: 'end', agent: child.name, runId, task, taskId: opts.taskId, background: opts.background, costUsd: result.costUsd, stop: result.stop, worktree })
+      return out
+    } catch (err) {
+      req.emit({ type: 'delegation', phase: 'end', agent: child.name, runId, task, taskId: opts.taskId, background: opts.background, costUsd: 0, stop: 'error', worktree })
+      throw err
     } finally {
       this.activeBudgets.delete(runId)
     }

@@ -10,8 +10,15 @@ export function openDb(path: string): DatabaseType {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   migrate(db)
+  addColumn(db, 'sessions', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
+  addColumn(db, 'sessions', 'archived', 'INTEGER NOT NULL DEFAULT 0')
   Ledger.migrate(db)
   return db
+}
+
+function addColumn(db: DatabaseType, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (!columns.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
 }
 
 function migrate(db: DatabaseType): void {

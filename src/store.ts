@@ -8,6 +8,8 @@ interface SessionRow {
   workspace: string
   title: string
   origin: string
+  pinned: number
+  archived: number
   created_at: number
   updated_at: number
 }
@@ -47,14 +49,46 @@ export class SessionStore {
     return row ? this.summarize(row) : undefined
   }
 
-  list(limit = 50): SessionSummary[] {
-    const rows = this.db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?').all(limit) as SessionRow[]
+  list(limit = 50, includeArchived = false): SessionSummary[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM sessions ${includeArchived ? '' : 'WHERE archived = 0'} ORDER BY pinned DESC, updated_at DESC LIMIT ?`)
+      .all(limit) as SessionRow[]
     return rows.map((r) => this.summarize(r))
   }
 
   touch(id: string, title?: string): void {
     if (title) this.db.prepare('UPDATE sessions SET updated_at = ?, title = ? WHERE id = ?').run(Date.now(), title, id)
     else this.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(Date.now(), id)
+  }
+
+  /** Renomeia, fixa ou arquiva sem mexer em `updated_at`, para nao reordenar a lista. */
+  update(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean }): SessionSummary | undefined {
+    if (patch.title !== undefined) this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(patch.title.trim().slice(0, 120) || 'Sem titulo', id)
+    if (patch.pinned !== undefined) this.db.prepare('UPDATE sessions SET pinned = ? WHERE id = ?').run(patch.pinned ? 1 : 0, id)
+    if (patch.archived !== undefined) this.db.prepare('UPDATE sessions SET archived = ? WHERE id = ?').run(patch.archived ? 1 : 0, id)
+    return this.get(id)
+  }
+
+  /** Apaga a sessao e seu historico. O ledger fica, porque o custo ja foi pago. */
+  delete(id: string): boolean {
+    const tx = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM events WHERE session_id = ?').run(id)
+      this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(id)
+      this.db.prepare('DELETE FROM tool_events WHERE session_id = ?').run(id)
+      this.db.prepare('DELETE FROM approvals WHERE session_id = ?').run(id)
+      return this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id).changes
+    })
+    return tx() > 0
+  }
+
+  /** Cria uma sessao nova com o mesmo agente e workspace e copia o historico visivel ao modelo. */
+  fork(id: string): SessionSummary | undefined {
+    const source = this.get(id)
+    if (!source) return undefined
+    const copy = this.create(source.agent, source.workspace, `Copia de ${source.title}`.slice(0, 120), 'user')
+    const history = this.history(id)
+    if (history.length > 0) this.appendMessages(copy.id, `fork-${id}`, history)
+    return this.get(copy.id)
   }
 
   history(sessionId: string): Message[] {
@@ -127,6 +161,8 @@ export class SessionStore {
       workspace: row.workspace,
       title: row.title,
       origin: row.origin,
+      pinned: row.pinned === 1,
+      archived: row.archived === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       costUsd: this.ledger.totals({ sessionId: row.id }).costUsd,

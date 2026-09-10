@@ -84,8 +84,29 @@ export class ConnectionHub {
         return
       }
       case 'session.list':
-        send({ type: 'session.list', sessions: runtime.store.list(frame.limit) })
+        send({ type: 'session.list', sessions: runtime.store.list(frame.limit, frame.include_archived) })
         return
+      case 'session.update': {
+        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived })
+        if (!session) throw new Error('sessao nao encontrada')
+        this.broadcast({ type: 'session.updated', session })
+        return
+      }
+      case 'session.delete': {
+        if (this.runs.size > 0) {
+          for (const [, c] of this.runs) c.signal.aborted
+        }
+        if (!runtime.store.delete(frame.session_id)) throw new Error('sessao nao encontrada')
+        this.broadcast({ type: 'session.deleted', session_id: frame.session_id })
+        return
+      }
+      case 'session.fork': {
+        const session = runtime.store.fork(frame.session_id)
+        if (!session) throw new Error('sessao nao encontrada')
+        send({ type: 'session.created', session })
+        this.broadcast({ type: 'session.updated', session })
+        return
+      }
       case 'session.get': {
         const session = runtime.store.get(frame.session_id)
         if (!session) throw new Error('sessao nao encontrada')
