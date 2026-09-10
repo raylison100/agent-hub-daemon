@@ -426,7 +426,7 @@ export class Runtime {
     })
     try {
       const result = await runner.run({ runId, sessionId: req.sessionId, history: [], userText: task, parentRunId })
-      this.store.appendMessages(req.sessionId, runId, result.appended)
+      this.store.appendMessages(req.sessionId, runId, result.appended, { parentRunId, agent: child.name })
       const last = [...result.appended].reverse().find((m) => m.role === 'assistant')
       const out = { text: (last ? messageText(last) : text.join('')) || text.join(''), costUsd: result.costUsd, runId, stop: result.stop, error: result.error, worktree, taskId: opts.taskId, agent: child.name }
       req.emit({ type: 'delegation', phase: 'end', agent: child.name, runId, task, taskId: opts.taskId, background: opts.background, costUsd: result.costUsd, stop: result.stop, worktree })

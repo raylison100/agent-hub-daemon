@@ -91,21 +91,39 @@ export class SessionStore {
     return this.get(copy.id)
   }
 
+  /** Historico que vai ao modelo: so mensagens do nivel principal, a partir da ultima compactacao. */
   history(sessionId: string): Message[] {
     const rows = this.db
-      .prepare('SELECT content_json FROM messages WHERE session_id = ? ORDER BY id')
+      .prepare('SELECT content_json FROM messages WHERE session_id = ? AND parent_run_id IS NULL ORDER BY id')
       .all(sessionId) as { content_json: string }[]
     const all = rows.map((r) => JSON.parse(r.content_json) as Message)
     const lastCompaction = all.map((m, i) => (m.kind === 'compaction' ? i : -1)).reduce((a, b) => Math.max(a, b), -1)
     return lastCompaction > 0 ? all.slice(lastCompaction) : all
   }
 
-  appendMessages(sessionId: string, runId: string, messages: Message[]): void {
+  /** Mensagens de subagentes agrupadas por run filho, para a interface aninhar nos cartoes. */
+  children(sessionId: string): { runId: string; parentRunId: string; agent: string; messages: Message[] }[] {
+    const rows = this.db
+      .prepare('SELECT run_id, parent_run_id, agent, content_json FROM messages WHERE session_id = ? AND parent_run_id IS NOT NULL ORDER BY id')
+      .all(sessionId) as { run_id: string; parent_run_id: string; agent: string | null; content_json: string }[]
+    const groups = new Map<string, { runId: string; parentRunId: string; agent: string; messages: Message[] }>()
+    for (const r of rows) {
+      let g = groups.get(r.run_id)
+      if (!g) {
+        g = { runId: r.run_id, parentRunId: r.parent_run_id, agent: r.agent ?? 'subagente', messages: [] }
+        groups.set(r.run_id, g)
+      }
+      g.messages.push(JSON.parse(r.content_json) as Message)
+    }
+    return [...groups.values()]
+  }
+
+  appendMessages(sessionId: string, runId: string, messages: Message[], child?: { parentRunId: string; agent: string }): void {
     const insert = this.db.prepare(
-      'INSERT INTO messages (session_id, run_id, role, content_json, created_at) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO messages (session_id, run_id, role, content_json, created_at, parent_run_id, agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
     )
     const tx = this.db.transaction((items: Message[]) => {
-      for (const m of items) insert.run(sessionId, runId, m.role, JSON.stringify(m), Date.now())
+      for (const m of items) insert.run(sessionId, runId, m.role, JSON.stringify(m), Date.now(), child?.parentRunId ?? null, child?.agent ?? null)
     })
     tx(messages)
     this.touch(sessionId)

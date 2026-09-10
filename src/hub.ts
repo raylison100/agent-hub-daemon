@@ -112,7 +112,12 @@ export class ConnectionHub {
       case 'session.get': {
         const session = runtime.store.get(frame.session_id)
         if (!session) throw new Error('sessao nao encontrada')
-        send({ type: 'session.get', session, messages: runtime.store.history(frame.session_id) })
+        send({
+          type: 'session.get',
+          session,
+          messages: runtime.store.history(frame.session_id),
+          children: runtime.store.children(frame.session_id).map((c) => ({ run_id: c.runId, parent_run_id: c.parentRunId, agent: c.agent, messages: c.messages })),
+        })
         return
       }
       case 'sync':
