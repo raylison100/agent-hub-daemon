@@ -99,6 +99,32 @@ export class ConnectionHub {
         send({ type: 'workspace.list', path: target, dirs })
         return
       }
+      case 'workspace.find': {
+        const alvo = frame.name.trim().toLowerCase()
+        const achados: string[] = []
+        const varrer = (dir: string, profundidade: number): void => {
+          if (profundidade > 4 || achados.length >= 20) return
+          let filhos: string[] = []
+          try {
+            filhos = readdirSync(dir, { withFileTypes: true })
+              .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+              .map((e) => e.name)
+          } catch {
+            return
+          }
+          for (const nome of filhos) {
+            const caminho = join(dir, nome)
+            if (nome.toLowerCase() === alvo) achados.push(caminho)
+            varrer(caminho, profundidade + 1)
+          }
+        }
+        for (const raiz of runtime.config.workspaces) {
+          if (raiz.split('/').filter(Boolean).pop()?.toLowerCase() === alvo) achados.push(raiz)
+          varrer(raiz, 1)
+        }
+        send({ type: 'workspace.find', name: frame.name, paths: [...new Set(achados)] })
+        return
+      }
       case 'feedback.set': {
         runtime.setFeedback(frame.session_id, frame.run_id, frame.verdict)
         this.broadcast({ type: 'feedback.ok', session_id: frame.session_id, run_id: frame.run_id, verdict: frame.verdict })
