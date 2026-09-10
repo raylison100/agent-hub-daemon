@@ -13,6 +13,7 @@ export function openDb(path: string): DatabaseType {
   addColumn(db, 'sessions', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
   addColumn(db, 'sessions', 'archived', 'INTEGER NOT NULL DEFAULT 0')
   addColumn(db, 'sessions', 'mode', "TEXT NOT NULL DEFAULT 'normal'")
+  addColumn(db, 'sessions', 'group_name', 'TEXT')
   addColumn(db, 'messages', 'parent_run_id', 'TEXT')
   addColumn(db, 'messages', 'agent', 'TEXT')
   Ledger.migrate(db)

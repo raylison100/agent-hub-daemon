@@ -126,12 +126,22 @@ export class ConnectionHub {
         return
       case 'session.update': {
         const agent = frame.agent === undefined ? undefined : frame.agent === autoAgent ? autoAgent : runtime.profile(frame.agent).name
-        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived, agent, mode: frame.mode })
+        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived, agent, mode: frame.mode, group: frame.group })
         if (!session) throw new Error('sessao nao encontrada')
         if (frame.mode === 'auto_approve') {
           for (const id of runtime.flushApprovals(frame.session_id)) this.broadcast({ type: 'approval.resolved', approval_id: id, decision: 'allow' })
         }
         this.broadcast({ type: 'session.updated', session })
+        return
+      }
+      case 'session.update_many': {
+        const atualizadas = runtime.store.updateMany(frame.session_ids, { pinned: frame.pinned, archived: frame.archived, group: frame.group })
+        for (const s of atualizadas) this.broadcast({ type: 'session.updated', session: s })
+        return
+      }
+      case 'session.delete_many': {
+        const apagadas = runtime.store.deleteMany(frame.session_ids)
+        this.broadcast({ type: 'session.deleted_many', session_ids: apagadas })
         return
       }
       case 'session.delete': {
