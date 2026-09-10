@@ -2,6 +2,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { protocolVersion, resolveInside, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
+import { addServers, claudeCodeServers, parseServers, removeServer, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
@@ -17,6 +18,7 @@ export interface Conn {
 export class ConnectionHub {
   private readonly conns = new Set<Conn>()
   private readonly runs = new Map<string, AbortController>()
+  private readonly mcpErrors = new Map<string, string>()
   scheduler!: Scheduler
   triggers!: Triggers
   readonly workflows: WorkflowEngine
@@ -229,11 +231,46 @@ export class ConnectionHub {
         if (!this.triggers.delete(frame.id)) throw new Error('gatilho nao encontrado')
         return
       case 'mcp.servers': {
-        const connected = new Set(runtime.mcp.connected())
-        send({
-          type: 'mcp.servers',
-          servers: Object.entries(runtime.repo.mcp.servers).map(([name, cfg]) => ({ name, connected: connected.has(name), transport: cfg.url ? 'http' : 'stdio' })),
-        })
+        send({ type: 'mcp.servers', servers: this.serverList() })
+        return
+      }
+      case 'mcp.add': {
+        const result = addServers(runtime.config.agentsDir, parseServers(frame.text))
+        runtime.reload()
+        send({ type: 'mcp.saved', added: result.added, secrets: result.secrets })
+        this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
+        return
+      }
+      case 'mcp.import': {
+        const found = claudeCodeServers()
+        if (Object.keys(found).length === 0) throw new Error('nenhum servidor MCP encontrado no Claude Code deste usuario')
+        const result = addServers(runtime.config.agentsDir, found)
+        runtime.reload()
+        send({ type: 'mcp.saved', added: result.added, secrets: result.secrets })
+        this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
+        return
+      }
+      case 'mcp.connect': {
+        await this.connectMcp(frame.name)
+        send({ type: 'mcp.saved', added: [], secrets: [] })
+        this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
+        return
+      }
+      case 'mcp.remove': {
+        await runtime.mcp.close(frame.name)
+        if (!removeServer(runtime.config.agentsDir, frame.name)) throw new Error(`servidor nao encontrado: ${frame.name}`)
+        runtime.reload()
+        send({ type: 'mcp.saved', added: [], secrets: [] })
+        this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
+        return
+      }
+      case 'mcp.toggle': {
+        if (!setEnabled(runtime.config.agentsDir, frame.name, frame.enabled)) throw new Error(`servidor nao encontrado: ${frame.name}`)
+        runtime.reload()
+        if (!frame.enabled) await runtime.mcp.close(frame.name)
+        else await this.connectMcp(frame.name)
+        send({ type: 'mcp.saved', added: [], secrets: [] })
+        this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
         return
       }
       case 'mcp.resources':
@@ -331,6 +368,22 @@ export class ConnectionHub {
     }
   }
 
+  /** Estado de cada servidor MCP declarado, com transporte, ligado e quantas ferramentas expoe. */
+  private serverList() {
+    const connected = new Set(this.runtime.mcp.connected())
+    return Object.entries(this.runtime.repo.mcp.servers).map(([name, cfg]) => ({
+      name,
+      connected: connected.has(name),
+      enabled: cfg.enabled,
+      transport: cfg.url ? ('http' as const) : ('stdio' as const),
+      command: cfg.command ?? '',
+      args: cfg.args,
+      url: cfg.url ?? null,
+      tools: this.runtime.registry.names().filter((t) => t.startsWith(`${name}__`)).length,
+      error: this.mcpErrors.get(name) ?? null,
+    }))
+  }
+
   /** Workspace alvo de um frame de arquivos: pela sessao quando existe, senao pelo caminho informado, sempre validado contra as raizes. */
   private workspaceOf(sessionId?: string, workspace?: string): string {
     if (sessionId) {
@@ -342,11 +395,17 @@ export class ConnectionHub {
     throw new Error('informe session_id ou workspace')
   }
 
+  /** Conecta sob demanda e guarda a ultima falha, para a tela de conectores mostrar o motivo. */
   private async connectMcp(name: string): Promise<void> {
-    const config = this.runtime.repo.mcp.servers[name]
-    if (!config) throw new Error(`servidor MCP nao configurado: ${name}`)
-    this.runtime.registry.registerAll(await this.runtime.mcp.connect(name, config))
+    try {
+      await this.runtime.ensureMcpServer(name)
+      this.mcpErrors.delete(name)
+    } catch (err) {
+      this.mcpErrors.set(name, describe(err))
+      throw err
+    }
   }
+
 
   private startRun(
     sessionId: string,

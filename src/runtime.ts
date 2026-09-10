@@ -492,12 +492,15 @@ export class Runtime {
   }
 
   async ensureMcp(profile: AgentProfile): Promise<void> {
-    for (const name of profile.tools.mcp) {
-      const config = this.repo.mcp.servers[name]
-      if (!config) throw new Error(`servidor MCP nao configurado: ${name}`)
-      const tools = await this.mcp.connect(name, config)
-      this.registry.registerAll(tools)
-    }
+    for (const name of profile.tools.mcp) await this.ensureMcpServer(name)
+  }
+
+  /** Conecta um servidor MCP declarado e registra suas ferramentas. Servidor desligado nao conecta. */
+  async ensureMcpServer(name: string): Promise<void> {
+    const config = this.repo.mcp.servers[name]
+    if (!config) throw new Error(`servidor MCP nao configurado: ${name}`)
+    if (!config.enabled) throw new Error(`servidor MCP desligado: ${name}`)
+    this.registry.registerAll(await this.mcp.connect(name, config))
   }
 
   overrideBudget(runId: string, scope: BudgetScope, limitUsd: number): boolean {
