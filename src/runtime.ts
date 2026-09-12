@@ -25,6 +25,7 @@ import {
   loadAgentsRepo,
   messageText,
   nativeTools,
+  needsDelegation,
   classifyIntent,
   feedbackDelta,
   parseClassifierAnswer,
@@ -308,18 +309,25 @@ export class Runtime {
   async resolveAgent(explicit: string | undefined, text: string, workspace: string, needsVision = false): Promise<ResolvedAgent> {
     if (explicit && explicit !== autoAgent) return { agent: this.profile(explicit).name, routed: null, by: 'fixed' }
     const ctx = { text, workspace }
-    let routed = needsVision ? null : route(this.repo.routing, ctx)
+    const delega = needsDelegation(text)
+    let routed = needsVision ? null : this.ruleThatDelegates(route(this.repo.routing, ctx), delega)
     if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'rule' }
     let intent = classifyIntent(text, this.repo.routing.intents)
     if (intent === null && this.repo.routing.classifier && text.trim()) {
       intent = await this.classify(text)
-      if (intent && !needsVision) routed = route(this.repo.routing, ctx, intent)
+      if (intent && !needsVision) routed = this.ruleThatDelegates(route(this.repo.routing, ctx, intent), delega)
       if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'classifier' }
     }
-    const scored = this.scoreFor(intent, text, undefined, needsVision)
+    const scored = this.scoreFor(intent, text, undefined, needsVision, delega)
     if (scored.chosen) return { agent: this.profile(scored.chosen.agent).name, routed: null, by: 'score', intent, ranking: scored.ranking }
     if (this.repo.routing.default_agent) return { agent: this.profile(this.repo.routing.default_agent).name, routed: null, by: 'default', intent, ranking: scored.ranking }
     throw new Error('nenhuma regra casou, nenhum agente pontuou e nao ha default_agent em routing.json')
+  }
+
+  /** Regra so vale se o agente dela der conta do pedido; pedido de subagente vai para quem delega. */
+  private ruleThatDelegates(routed: RouteResult | null, delega: boolean): RouteResult | null {
+    if (!routed || !delega) return routed
+    return this.repo.profiles.get(routed.agent)?.delegates.length ? routed : null
   }
 
   /** Aviso quando a tabela de precos esta velha; precos de provedor mudam e a tabela e atualizada a mao. */
@@ -331,7 +339,13 @@ export class Runtime {
   }
 
   /** Ranking deterministico de custo x capacidade entre os perfis com capacidade declarada para a intencao. */
-  scoreFor(intent: string | null, text: string, at?: Date, needsVision = false): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
+  scoreFor(
+    intent: string | null,
+    text: string,
+    at?: Date,
+    needsVision = false,
+    needsDelegates = false,
+  ): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
     const scoring = this.repo.routing.scoring
     if (!scoring) return { chosen: null, ranking: [] }
     const candidates: ScoreCandidate[] = [...this.repo.profiles.values()].map((p) => ({
@@ -343,11 +357,13 @@ export class Runtime {
       contextWindow: p.context.window,
       maxOutput: p.max_output,
       vision: p.routing.vision,
+      delegates: p.delegates.length > 0,
     }))
     return scoreAgents(candidates, (provider, model) => this.priceOrNull(provider, model, at), scoring, {
       intent,
       promptTokens: approxTokens(text),
       needsVision,
+      needsDelegation: needsDelegates,
       unavailable: (name) => this.unavailableReason(name),
       adjustments: this.feedbackAdjustments(intent),
     })

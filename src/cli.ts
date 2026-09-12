@@ -3,7 +3,7 @@ import { Command } from 'commander'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
-import { classifyIntent, route } from '@agent-hub/core'
+import { classifyIntent, needsDelegation, route } from '@agent-hub/core'
 import type { ReportGroup, RunEvent } from '@agent-hub/core'
 import type { PendingApproval } from './approvals.js'
 import { AutomationRunner } from './automation.js'
@@ -218,10 +218,12 @@ program
     const stale = runtime.pricingStaleness()
     if (stale) console.error(`aviso: ${stale}`)
     const intent = classifyIntent(texto, runtime.repo.routing.intents)
+    const delega = needsDelegation(texto)
     const ruled = opts.imagem ? null : route(runtime.repo.routing, { text: texto, workspace: process.cwd() })
     console.log(`intencao por palavra chave: ${intent ?? 'nenhuma'}`)
+    if (delega) console.log('pedido fala em subagente ou delegacao: so entram agentes que delegam')
     if (ruled) console.log(`regra: ${JSON.stringify(ruled.rule.when)} -> ${ruled.agent}`)
-    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true)
+    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true, delega)
     if (scored.ranking.length === 0) {
       console.log('pontuacao desligada: sem bloco scoring em routing.json')
       return
