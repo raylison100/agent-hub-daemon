@@ -192,6 +192,7 @@ export class Runtime {
   readonly knowledge: KnowledgeStore
   readonly oauth: McpOAuth
   readonly auth: AuthStore
+  onMcpClose: ((name: string) => void) | null = null
   automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
@@ -654,6 +655,33 @@ export class Runtime {
     for (const name of profile.tools.mcp) await this.ensureMcpServer(name)
   }
 
+
+  /** Servidores MCP que algum perfil ou papel declara usar: sao os que vale manter conectados sozinhos. */
+  usedMcpServers(): string[] {
+    const usados = new Set<string>()
+    for (const p of this.repo.profiles.values()) for (const s of p.tools.mcp) usados.add(s)
+    for (const r of this.repo.roles.values()) for (const s of r.tools?.mcp ?? []) usados.add(s)
+    return [...usados].filter((name) => this.repo.mcp.servers[name]?.enabled === true)
+  }
+
+  /**
+   * Liga o que esta faltando entre os servidores em uso. Roda no start e de tempos em tempos, porque conexao
+   * MCP vive em memoria: reiniciar o daemon, ou o servidor morrer, derruba tudo e ninguem reconectava sozinho.
+   */
+  async connectUsedMcpServers(): Promise<{ name: string; error?: string }[]> {
+    const ja = new Set(this.mcp.connected())
+    const saida: { name: string; error?: string }[] = []
+    for (const name of this.usedMcpServers()) {
+      if (ja.has(name)) continue
+      try {
+        await this.ensureMcpServer(name)
+        saida.push({ name })
+      } catch (err) {
+        saida.push({ name, error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+    return saida
+  }
   /** Conecta um servidor MCP declarado e registra suas ferramentas. Servidor desligado nao conecta. */
   async ensureMcpServer(name: string): Promise<void> {
     const config = this.repo.mcp.servers[name]
@@ -661,7 +689,7 @@ export class Runtime {
     if (!config.enabled) throw new Error(`servidor MCP desligado: `)
     const bearer = config.oauth ? await this.oauth.bearer(name) : undefined
     if (config.oauth && !bearer) throw new Error(`servidor  pede autorizacao: abra Conectores e clique em Autorizar`)
-    this.registry.registerAll(await this.mcp.connect(name, config, bearer))
+    this.registry.registerAll(await this.mcp.connect(name, config, bearer, (caiu) => this.onMcpClose?.(caiu)))
   }
 
   overrideBudget(runId: string, scope: BudgetScope, limitUsd: number): boolean {

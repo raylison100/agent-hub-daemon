@@ -106,6 +106,19 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
   registerA2A(app, runtime, hub, token)
 
   await app.listen({ host: runtime.config.host, port: runtime.config.port })
+  runtime.onMcpClose = (name) => {
+    log(`conector ${name} caiu; reconecta na proxima verificacao`)
+    hub.broadcast({ type: 'mcp.servers', servers: hub.serverList() })
+  }
+  const manterMcp = async (): Promise<void> => {
+    const resultado = await runtime.connectUsedMcpServers()
+    for (const r of resultado) log(r.error ? `conector ${r.name}: ${r.error}` : `conector ${r.name} conectado`)
+    if (resultado.length > 0) hub.broadcast({ type: 'mcp.servers', servers: hub.serverList() })
+  }
+  void manterMcp()
+  const mcpTimer = setInterval(() => void manterMcp(), 60_000)
+  mcpTimer.unref()
+
   scheduler.start()
   triggers.loadFiles()
 
@@ -119,6 +132,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
     triggers,
     async close() {
       link?.stop()
+      clearInterval(mcpTimer)
       scheduler.stop()
       hub.abortAll()
       await runtime.mcp.close()

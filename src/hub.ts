@@ -551,7 +551,7 @@ export class ConnectionHub {
   }
 
   /** Estado de cada servidor MCP declarado, com transporte, ligado e quantas ferramentas expoe. */
-  private serverList() {
+  serverList() {
     const connected = new Set(this.runtime.mcp.connected())
     return Object.entries(this.runtime.repo.mcp.servers).map(([name, cfg]) => ({
       name,
