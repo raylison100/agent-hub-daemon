@@ -107,6 +107,19 @@ function migrate(db: DatabaseType): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      run_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      workspace TEXT NOT NULL,
+      inputs_json TEXT NOT NULL,
+      context_json TEXT NOT NULL,
+      next_step TEXT,
+      status TEXT NOT NULL,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS resumes (
       session_id TEXT PRIMARY KEY,
       run_id TEXT,

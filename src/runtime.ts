@@ -237,6 +237,16 @@ export class Runtime {
   }
 
 
+
+  /** Itens de memoria velhos no workspace usado mais recentemente, para o painel de saude avisar. */
+  staleMemories(dias = 90): { detalhe: string } | null {
+    const recente = this.store.list(1)[0]
+    if (!recente) return null
+    const limite = new Date(Date.now() - dias * 86_400_000).toISOString().slice(0, 10)
+    const velhos = loadMemories(recente.workspace).filter((m) => (m.data ?? '9999') < limite)
+    if (velhos.length === 0) return null
+    return { detalhe: `${velhos.length} item(ns) com mais de ${dias} dias em ${recente.workspace}: ${velhos.map((m) => m.name).join(', ')}` }
+  }
   /** Itens de memoria com o cabecalho lido, para a interface mostrar quando cada um entra e de que run veio. */
   contextFiles(workspace: string, dir: string): ContextFile[] {
     if (dir !== memoryDir) return listContextFiles(workspace, dir)

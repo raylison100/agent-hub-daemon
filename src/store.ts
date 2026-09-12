@@ -194,6 +194,26 @@ export class SessionStore {
     this.db.prepare('UPDATE approvals SET decision = ?, resolved_at = ? WHERE id = ?').run(decision, Date.now(), id)
   }
 
+
+  /** Runs que terminaram mal no periodo, lidos dos eventos gravados: e la que aparece a parada do run inteiro. */
+  recentFailures(since: number, limit = 5): { sessionId: string; runId: string; stop: string; error?: string }[] {
+    const rows = this.db
+      .prepare("SELECT session_id, run_id, event_json FROM events WHERE created_at >= ? AND event_json LIKE '%run_finished%' ORDER BY seq DESC LIMIT 200")
+      .all(since) as { session_id: string; run_id: string; event_json: string }[]
+    const ruins = new Set(['error', 'max_output', 'budget_exceeded', 'tool_call_invalid', 'refusal'])
+    const out: { sessionId: string; runId: string; stop: string; error?: string }[] = []
+    for (const row of rows) {
+      if (out.length >= limit) break
+      try {
+        const e = JSON.parse(row.event_json) as { type: string; stop?: string; error?: string }
+        if (e.type !== 'run_finished' || !e.stop || !ruins.has(e.stop)) continue
+        out.push({ sessionId: row.session_id, runId: row.run_id, stop: e.stop, error: e.error })
+      } catch {
+        continue
+      }
+    }
+    return out
+  }
   /** Guarda o ponto de retomada da sessao, um por sessao, sempre o mais recente. */
   saveResume(sessionId: string, runId: string | null, resume: SessionResume, text: string): SessionResumeRecord {
     const now = Date.now()

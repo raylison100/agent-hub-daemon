@@ -1,16 +1,19 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
   contextDir,
   decisionsDir,
   isRepoRoot,
+  hookCatalog,
   listContextFiles,
   memoryDir,
   protocolVersion,
   resolveInside,
   specsDir,
   type ClientFrame,
+  type HealthItem,
+  type HookConfig,
   type RunMode,
   type ServerFrame,
 } from '@agent-hub/core'
@@ -112,6 +115,24 @@ export class ConnectionHub {
         send({ type: 'workspace.list', path: target, dirs, repo: isRepoRoot(target), repos: dirs.filter((d) => isRepoRoot(join(target, d))) })
         return
       }
+      case 'hooks.list':
+        send(this.hooksFrame())
+        return
+      case 'hooks.toggle': {
+        const item = hookCatalog.find((h) => h.id === frame.id)
+        if (!item) throw new Error(`gancho desconhecido: ${frame.id}`)
+        const file = join(runtime.config.agentsDir, 'hooks.json')
+        const atuais = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { hooks: HookConfig[] }) : { hooks: [] }
+        const iguais = (h: HookConfig) => h.event === item.hook.event && h.command === item.hook.command
+        atuais.hooks = frame.enabled ? [...atuais.hooks.filter((h) => !iguais(h)), item.hook] : atuais.hooks.filter((h) => !iguais(h))
+        writeFileSync(file, `${JSON.stringify(atuais, null, 2)}\n`)
+        runtime.reload()
+        send(this.hooksFrame())
+        return
+      }
+      case 'health.list':
+        send({ type: 'health.list', items: this.health() })
+        return
       case 'context.list': {
         const dir = runtime.assertWorkspace(frame.workspace)
         send({
@@ -428,7 +449,7 @@ export class ConnectionHub {
         await runtime.push.send({ title: 'Agent Hub', body: `Notificacoes ativas em ${runtime.config.deviceName}`, tag: 'teste' })
         return
       case 'workflow.list':
-        send({ type: 'workflow.list', workflows: this.workflows.list() })
+        send({ type: 'workflow.list', workflows: this.workflows.list(), pending: this.workflows.pending() })
         return
       case 'secrets.list':
         send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
@@ -490,6 +511,9 @@ export class ConnectionHub {
       case 'workflow.run':
         void this.workflows.run({ name: frame.name, inputs: frame.inputs, workspace: frame.workspace }).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
         return
+      case 'workflow.resume':
+        void this.workflows.resume(frame.run_id).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
+        return
     }
   }
 
@@ -533,6 +557,80 @@ export class ConnectionHub {
   }
 
 
+
+
+  /** Catalogo de ganchos prontos com o que ja esta ligado em hooks.json marcado. */
+  private hooksFrame(): ServerFrame {
+    const ativos = this.runtime.repo.hooks
+    const catalog = hookCatalog.map((h) => ({
+      id: h.id,
+      title: h.title,
+      detail: h.detail,
+      event: h.hook.event,
+      tool: h.hook.match.tool,
+      enabled: ativos.some((a) => a.event === h.hook.event && a.command === h.hook.command),
+    }))
+    const doCatalogo = new Set(hookCatalog.map((h) => h.hook.command))
+    return { type: 'hooks.list', catalog, extras: ativos.filter((a) => !doCatalogo.has(a.command)).length }
+  }
+  /** Painel de saude: so o que precisa de acao sua, com a proxima acao dita em uma linha. */
+  private health(): HealthItem[] {
+    const runtime = this.runtime
+    const itens: HealthItem[] = []
+    const pendentes = runtime.approvals.list()
+    if (pendentes.length > 0) {
+      itens.push({
+        level: 'aviso',
+        title: `${pendentes.length} aprovacao(oes) esperando`,
+        detail: pendentes.map((p) => p.tool).join(', '),
+        action: 'Abra a conversa e responda, ou o pedido expira e o run para',
+        route: `/session/${pendentes[0]!.sessionId}`,
+      })
+    }
+    const desde = Date.now() - 24 * 60 * 60 * 1000
+    const falhas = runtime.store.recentFailures(desde)
+    if (falhas.length > 0) {
+      itens.push({
+        level: 'erro',
+        title: `${falhas.length} run(s) terminaram mal nas ultimas 24h`,
+        detail: falhas.map((f) => `${f.stop}${f.error ? `: ${f.error.slice(0, 60)}` : ''}`).join(' | '),
+        action: 'Veja o motivo na conversa antes de repetir o pedido',
+        route: falhas[0] ? `/session/${falhas[0].sessionId}` : undefined,
+      })
+    }
+    const comErro = [...this.mcpErrors.entries()]
+    if (comErro.length > 0) {
+      itens.push({
+        level: 'erro',
+        title: `${comErro.length} conector(es) com erro`,
+        detail: comErro.map(([nome, erro]) => `${nome}: ${erro.slice(0, 80)}`).join(' | '),
+        action: 'Confira comando, URL e chaves em Conectores',
+        route: '/settings/conectores',
+      })
+    }
+    const custo = runtime.costStatus()
+    if (custo.globalMonthLimit !== null && custo.monthUsd > custo.globalMonthLimit * 0.8) {
+      itens.push({
+        level: custo.monthUsd >= custo.globalMonthLimit ? 'erro' : 'aviso',
+        title: `Orcamento do mes em ${((custo.monthUsd / custo.globalMonthLimit) * 100).toFixed(0)}%`,
+        detail: `${custo.monthUsd.toFixed(2)} de ${custo.globalMonthLimit.toFixed(2)} USD`,
+        action: 'Suba o teto em budgets.json ou segure os agentes caros',
+        route: '/settings/custos',
+      })
+    }
+    const precos = runtime.pricingStaleness()
+    if (precos) {
+      itens.push({ level: 'aviso', title: 'Tabela de precos velha', detail: precos, action: 'Rode o agendamento revisao-precos e atualize o que mudou', route: '/settings/automacoes' })
+    }
+    const memoria = runtime.staleMemories()
+    if (memoria) {
+      itens.push({ level: 'aviso', title: 'Memoria do projeto envelhecendo', detail: memoria.detalhe, action: 'Confira contra o codigo e apague o que nao vale mais', route: '/settings/contexto' })
+    }
+    if (itens.length === 0) {
+      itens.push({ level: 'ok', title: 'Nada pedindo atencao', detail: 'Sem aprovacao parada, sem run quebrado, sem conector com erro', action: 'Pode tocar o trabalho' })
+    }
+    return itens
+  }
   /** Escreve o ponto de retomada em segundo plano e avisa os clientes. Falha aqui nao atrapalha o run que ja terminou. */
   private async gerarRetomada(sessionId: string, runId: string): Promise<void> {
     try {

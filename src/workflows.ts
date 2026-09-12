@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import {
   decide,
   evaluateCondition,
+  isAgentStep,
   isGateStep,
   isToolStep,
   maxWorkflowCost,
@@ -18,6 +19,7 @@ import {
   type ToolDefinition,
   type ToolStep,
   type Workflow,
+  type WorkflowRunState,
   type WorkflowSummary,
 } from '@agent-hub/core'
 import { draftPolicy, type Runtime } from './runtime.js'
@@ -75,65 +77,103 @@ export class WorkflowEngine {
     if (!wf) throw new Error(`workflow desconhecido: ${req.name}`)
     for (const input of wf.inputs) if (!(input in req.inputs)) throw new Error(`entrada obrigatoria ausente: ${input}`)
     const workspace = this.runtime.assertWorkspace(req.workspace)
-    const firstAgent = wf.steps.find((s) => !isToolStep(s)) as AgentStep | undefined
+    const firstAgent = wf.steps.find((s) => isAgentStep(s)) as AgentStep | undefined
     const session = this.runtime.store.create(firstAgent?.agent ?? 'workflow', workspace, `[workflow] ${wf.name}`, 'workflow')
     const runId = randomUUID()
+    const context: Record<string, unknown> = { ...req.inputs }
+    this.salvar(runId, wf.name, session.id, workspace, req.inputs, context, wf.steps[0]!.id, 'rodando', 0)
     const maxCost = maxWorkflowCost(wf, this.runtime.repo.profiles)
     this.broadcast({ type: 'workflow.started', name: wf.name, session_id: session.id, run_id: runId, max_cost_usd: maxCost })
+    return this.execute(wf, session.id, runId, workspace, context, 0, 0)
+  }
 
-    const context: Record<string, unknown> = { ...req.inputs }
+  /** Continua um workflow que parou no meio, da etapa seguinte a ultima concluida, com o que ja tinha sido apurado. */
+  async resume(runId: string): Promise<WorkflowOutcome> {
+    const row = this.estado(runId)
+    if (!row) throw new Error(`run de workflow desconhecido: ${runId}`)
+    if (row.status === 'concluido') throw new Error('esse workflow ja terminou')
+    const wf = this.runtime.repo.workflows.get(row.name)
+    if (!wf) throw new Error(`workflow desconhecido: ${row.name}`)
+    const index = row.nextStep ? wf.steps.findIndex((s) => s.id === row.nextStep) : 0
+    if (index < 0) throw new Error(`a etapa ${row.nextStep} nao existe mais em ${row.name}`)
+    this.broadcast({ type: 'workflow.started', name: wf.name, session_id: row.sessionId, run_id: runId, max_cost_usd: maxWorkflowCost(wf, this.runtime.repo.profiles) })
+    this.broadcast({ type: 'workflow.step', session_id: row.sessionId, run_id: runId, step: row.nextStep ?? wf.steps[0]!.id, status: 'running', detail: 'retomando daqui' })
+    return this.execute(wf, row.sessionId, runId, row.workspace, row.context, index, row.costUsd)
+  }
+
+  /** Runs de workflow que pararam no meio e ainda da para continuar. */
+  pending(): WorkflowRunState[] {
+    return (
+      this.runtime.db
+        .prepare("SELECT * FROM workflow_runs WHERE status NOT IN ('concluido', 'rodando') ORDER BY updated_at DESC LIMIT 20")
+        .all() as WorkflowRow[]
+    ).map(toState)
+  }
+
+  private async execute(
+    wf: Workflow,
+    sessionId: string,
+    runId: string,
+    workspace: string,
+    context: Record<string, unknown>,
+    from: number,
+    already: number,
+  ): Promise<WorkflowOutcome> {
     const retries = new Map<string, number>()
-    let costUsd = 0
-    let index = 0
+    let costUsd = already
+    let index = from
     try {
       while (index < wf.steps.length) {
         const step = wf.steps[index]!
         if (wf.budget_usd !== undefined && costUsd >= wf.budget_usd) {
-          return this.finish(wf, session.id, runId, { status: 'budget_exceeded', costUsd, outputs: context, error: `orcamento do workflow esgotado: ${costUsd.toFixed(4)} USD` })
+          return this.finish(wf, sessionId, runId, { status: 'budget_exceeded', costUsd, outputs: context, error: `orcamento do workflow esgotado: ${costUsd.toFixed(4)} USD` }, step.id)
         }
         const started = Date.now()
-        this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'running' })
+        this.broadcast({ type: 'workflow.step', session_id: sessionId, run_id: runId, step: step.id, status: 'running' })
         let result: StepResult
         try {
           result = isToolStep(step)
-            ? await this.runTool(step, context, session.id, runId, workspace, wf.mode)
+            ? await this.runTool(step, context, sessionId, runId, workspace, wf.mode)
             : isGateStep(step)
-              ? await this.runGate(step, context, session.id, runId)
-              : await this.runAgent(step, context, session.id, runId, wf.mode)
+              ? await this.runGate(step, context, sessionId, runId)
+              : await this.runAgent(step, context, sessionId, runId, wf.mode)
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           if (err instanceof StepError) costUsd += err.costUsd
-          this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'error', detail: message, ms: Date.now() - started })
-          return this.finish(wf, session.id, runId, { status: 'error', costUsd, outputs: context, error: `etapa ${step.id}: ${message}` })
+          this.broadcast({ type: 'workflow.step', session_id: sessionId, run_id: runId, step: step.id, status: 'error', detail: message, ms: Date.now() - started })
+          return this.finish(wf, sessionId, runId, { status: 'error', costUsd, outputs: context, error: `etapa ${step.id}: ${message}` }, step.id)
         }
         costUsd += result.cost_usd ?? 0
         context[step.id] = result
         if (result.escalated === true) {
-          this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'escalated', detail: result.output, ms: Date.now() - started })
-          return this.finish(wf, session.id, runId, { status: 'escalated', costUsd, outputs: context, error: result.output })
+          this.broadcast({ type: 'workflow.step', session_id: sessionId, run_id: runId, step: step.id, status: 'escalated', detail: result.output, ms: Date.now() - started })
+          return this.finish(wf, sessionId, runId, { status: 'escalated', costUsd, outputs: context, error: result.output }, wf.steps[index + 1]?.id)
         }
-        this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'done', ms: Date.now() - started, cost_usd: result.cost_usd })
+        this.broadcast({ type: 'workflow.step', session_id: sessionId, run_id: runId, step: step.id, status: 'done', ms: Date.now() - started, cost_usd: result.cost_usd })
 
         const retry = isGateStep(step) ? undefined : step.retry
         if (retry && evaluateCondition(retry.when, result)) {
           const used = retries.get(step.id) ?? 0
           if (used < retry.max) {
             retries.set(step.id, used + 1)
-            this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'retry', detail: `volta para ${retry.step} (${used + 1}/${retry.max})` })
+            this.broadcast({ type: 'workflow.step', session_id: sessionId, run_id: runId, step: step.id, status: 'retry', detail: `volta para ${retry.step} (${used + 1}/${retry.max})` })
             index = wf.steps.findIndex((s) => s.id === retry.step)
+            this.checkpoint(runId, context, wf.steps[index]!.id, costUsd)
             continue
           }
         }
         index += 1
+        this.checkpoint(runId, context, wf.steps[index]?.id, costUsd)
       }
-      return this.finish(wf, session.id, runId, { status: 'done', costUsd, outputs: context })
+      return this.finish(wf, sessionId, runId, { status: 'done', costUsd, outputs: context })
     } finally {
-      const updated = this.runtime.store.get(session.id)
+      const updated = this.runtime.store.get(sessionId)
       if (updated) this.broadcast({ type: 'session.updated', session: updated })
     }
   }
 
-  private finish(wf: Workflow, sessionId: string, runId: string, outcome: WorkflowOutcome): WorkflowOutcome {
+  private finish(wf: Workflow, sessionId: string, runId: string, outcome: WorkflowOutcome, proxima?: string): WorkflowOutcome {
+    this.salvarStatus(runId, outcome.status === 'done' ? 'concluido' : outcome.status, proxima, outcome.costUsd, outcome.outputs)
     this.broadcast({
       type: 'workflow.finished',
       name: wf.name,
@@ -143,9 +183,48 @@ export class WorkflowEngine {
       cost_usd: outcome.costUsd,
       outputs: publicOutputs(outcome.outputs),
       error: outcome.error,
+      resumable: outcome.status !== 'done' && proxima !== undefined,
     })
     void this.runtime.push.send({ title: `Workflow ${wf.name} ${outcome.status}`, body: `${outcome.costUsd.toFixed(4)} USD`, url: `/session/${sessionId}`, tag: `workflow-${runId}` })
     return outcome
+  }
+
+  private salvar(
+    runId: string,
+    name: string,
+    sessionId: string,
+    workspace: string,
+    inputs: Record<string, string>,
+    context: Record<string, unknown>,
+    nextStep: string | undefined,
+    status: string,
+    costUsd: number,
+  ): void {
+    const agora = Date.now()
+    this.runtime.db
+      .prepare(
+        'INSERT INTO workflow_runs (run_id, name, session_id, workspace, inputs_json, context_json, next_step, status, cost_usd, created_at, updated_at) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(runId, name, sessionId, workspace, JSON.stringify(inputs), JSON.stringify(context), nextStep ?? null, status, costUsd, agora, agora)
+  }
+
+  /** Grava o ponto do workflow depois de cada etapa, para dar para continuar de onde parou. */
+  private checkpoint(runId: string, context: Record<string, unknown>, nextStep: string | undefined, costUsd: number): void {
+    this.runtime.db
+      .prepare('UPDATE workflow_runs SET context_json = ?, next_step = ?, cost_usd = ?, updated_at = ? WHERE run_id = ?')
+      .run(JSON.stringify(context), nextStep ?? null, costUsd, Date.now(), runId)
+  }
+
+  private salvarStatus(runId: string, status: string, nextStep: string | undefined, costUsd: number, context: Record<string, unknown>): void {
+    this.runtime.db
+      .prepare('UPDATE workflow_runs SET status = ?, next_step = ?, cost_usd = ?, context_json = ?, updated_at = ? WHERE run_id = ?')
+      .run(status, nextStep ?? null, costUsd, JSON.stringify(context), Date.now(), runId)
+  }
+
+  private estado(runId: string): WorkflowRunState | null {
+    const row = this.runtime.db.prepare('SELECT * FROM workflow_runs WHERE run_id = ?').get(runId) as WorkflowRow | undefined
+    return row ? toState(row) : null
   }
 
   private async runTool(step: ToolStep, context: Record<string, unknown>, sessionId: string, runId: string, workspace: string, mode: 'draft' | 'normal'): Promise<StepResult> {
@@ -262,4 +341,38 @@ function publicOutputs(context: Record<string, unknown>): Record<string, unknown
     } else out[k] = v
   }
   return out
+}
+
+interface WorkflowRow {
+  run_id: string
+  name: string
+  session_id: string
+  workspace: string
+  inputs_json: string
+  context_json: string
+  next_step: string | null
+  status: string
+  cost_usd: number
+  created_at: number
+  updated_at: number
+}
+
+function toState(row: WorkflowRow): WorkflowRunState {
+  let context: Record<string, unknown> = {}
+  try {
+    context = JSON.parse(row.context_json) as Record<string, unknown>
+  } catch {
+    context = {}
+  }
+  return {
+    runId: row.run_id,
+    name: row.name,
+    sessionId: row.session_id,
+    workspace: row.workspace,
+    context,
+    nextStep: row.next_step ?? undefined,
+    status: row.status,
+    costUsd: row.cost_usd,
+    updatedAt: row.updated_at,
+  }
 }

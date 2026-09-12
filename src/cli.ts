@@ -150,7 +150,8 @@ program
   .argument('[nome]', 'nome do workflow para rodar')
   .option('-w, --workspace <dir>', 'workspace do run')
   .option('-i, --input <k=v...>', 'entradas do workflow')
-  .action(async (nome: string | undefined, opts: { workspace?: string; input?: string[] }) => {
+  .option('--continuar <run_id>', 'continua um workflow que parou no meio')
+  .action(async (nome: string | undefined, opts: { workspace?: string; input?: string[]; continuar?: string }) => {
     const runtime = new Runtime(loadConfig())
     reportErrors(runtime)
     const { WorkflowEngine } = await import('./workflows.js')
@@ -159,9 +160,21 @@ program
       if (f.type === 'event') printEvent(f.event)
       if (f.type === 'approval.required') void askInTerminalPlain(runtime, f.approval_id, f.tool, f.args)
     })
+    if (opts.continuar) {
+      const outcome = await engine.resume(opts.continuar)
+      console.log(`\n[${outcome.status}] custo ${outcome.costUsd.toFixed(4)} USD${outcome.error ? `: ${outcome.error}` : ''}`)
+      runtime.terminals.closeAll()
+      await runtime.mcp.close()
+      return
+    }
     if (!nome) {
+      const parados = engine.pending()
       for (const w of engine.list()) {
-        console.log(`${w.name}	${w.mode}	entradas ${w.inputs.join(",") || "-"}	teto do workflow ${w.budgetUsd === null ? "sem teto" : `${w.budgetUsd.toFixed(2)} USD`}	soma dos orcamentos ${w.maxCostUsd === null ? "indefinida" : `${w.maxCostUsd.toFixed(4)} USD`}	${w.description}`)
+        console.log(`${w.name}\t${w.mode}\tentradas ${w.inputs.join(',') || '-'}\tteto do workflow ${w.budgetUsd === null ? 'sem teto' : `${w.budgetUsd.toFixed(2)} USD`}\tsoma dos orcamentos ${w.maxCostUsd === null ? 'indefinida' : `${w.maxCostUsd.toFixed(4)} USD`}\t${w.description}`)
+      }
+      if (parados.length > 0) {
+        console.log('\nparados no meio, da para continuar com --continuar <run_id>:')
+        for (const p of parados) console.log(`${p.runId}\t${p.name}\t${p.status}\tproxima etapa ${p.nextStep ?? '-'}\t${p.costUsd.toFixed(4)} USD`)
       }
       return
     }
