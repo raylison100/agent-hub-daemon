@@ -650,14 +650,14 @@ export class Runtime {
     if (!existsSync(target)) throw new Error(`workspace nao existe: ${target}`)
     return target
   }
-
   /**
-   * Conecta os servidores MCP do perfil. Um conector desconectado ou quebrado NAO derruba o run: o agente roda
-   * sem as ferramentas dele e a conversa diz quais ficaram de fora, senao desconectar um conector calaria o agente.
+   * Conecta os servidores MCP do perfil. Conector que VOCE desconectou nao vira aviso, porque desligar foi escolha
+   * sua; so entra no aviso o que era para estar no ar e nao subiu, e nesse caso o run continua sem aquelas ferramentas.
    */
   async ensureMcp(profile: AgentProfile): Promise<{ name: string; reason: string }[]> {
     const fora: { name: string; reason: string }[] = []
     for (const name of profile.tools.mcp) {
+      if (this.repo.mcp.servers[name]?.enabled === false) continue
       try {
         await this.ensureMcpServer(name)
       } catch (err) {
@@ -667,32 +667,12 @@ export class Runtime {
     return fora
   }
 
-
   /** Servidores MCP que algum perfil ou papel declara usar: sao os que vale manter conectados sozinhos. */
   usedMcpServers(): string[] {
     const usados = new Set<string>()
     for (const p of this.repo.profiles.values()) for (const s of p.tools.mcp) usados.add(s)
     for (const r of this.repo.roles.values()) for (const s of r.tools?.mcp ?? []) usados.add(s)
     return [...usados].filter((name) => this.repo.mcp.servers[name]?.enabled === true)
-  }
-
-  /**
-   * Liga o que esta faltando entre os servidores em uso. Roda no start e de tempos em tempos, porque conexao
-   * MCP vive em memoria: reiniciar o daemon, ou o servidor morrer, derruba tudo e ninguem reconectava sozinho.
-   */
-  async connectUsedMcpServers(): Promise<{ name: string; error?: string }[]> {
-    const ja = new Set(this.mcp.connected())
-    const saida: { name: string; error?: string }[] = []
-    for (const name of this.usedMcpServers()) {
-      if (ja.has(name)) continue
-      try {
-        await this.ensureMcpServer(name)
-        saida.push({ name })
-      } catch (err) {
-        saida.push({ name, error: err instanceof Error ? err.message : String(err) })
-      }
-    }
-    return saida
   }
 
   /** Conecta um servidor MCP declarado e registra suas ferramentas. Conector desconectado pelo usuario nao sobe. */

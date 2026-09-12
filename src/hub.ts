@@ -580,7 +580,8 @@ export class ConnectionHub {
   }
 
   /** Conecta sob demanda e guarda a ultima falha, para a tela de conectores mostrar o motivo. */
-  private async connectMcp(name: string): Promise<void> {
+  /** Conecta um conector guardando o ultimo erro, para a tela dizer Falhou com o motivo em vez de Conectando para sempre. */
+  async connectMcp(name: string): Promise<void> {
     try {
       await this.runtime.ensureMcpServer(name)
       this.mcpErrors.delete(name)
