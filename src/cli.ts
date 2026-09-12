@@ -228,7 +228,8 @@ program
   .option('--imagem', 'simula um pedido com imagem anexada, que exige agente com visao')
   .option('--contexto <tokens>', 'simula o historico ja acumulado na sessao, em tokens')
   .option('--papel <nome>', 'restringe aos modelos declarados no papel, como a sessao faria')
-  .action((texto: string, opts: { at?: string; imagem?: boolean; contexto?: string; papel?: string }) => {
+  .option('--lote', 'simula tarefa de lote, sem pressa: o custo pesa mais e agentes so de lote entram')
+  .action((texto: string, opts: { at?: string; imagem?: boolean; contexto?: string; papel?: string; lote?: boolean }) => {
     const runtime = new Runtime(loadConfig())
     const at = opts.at ? new Date(opts.at) : undefined
     if (at && Number.isNaN(at.getTime())) throw new Error(`instante invalido: ${opts.at}`)
@@ -246,7 +247,9 @@ program
     const modelos = opts.papel ? runtime.role(opts.papel).models : undefined
     if (modelos) console.log(`papel ${opts.papel}: so entram ${modelos.join(', ')}`)
     if (ruled) console.log(`regra: ${JSON.stringify(ruled.rule.when)} -> ${ruled.agent}`)
-    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true, delega, contexto, modelos)
+    const latencia = opts.lote === true ? 'lote' : 'interativo'
+    if (opts.lote) console.log('classe de latencia: lote, o custo pesa mais na pontuacao')
+    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true, delega, contexto, modelos, latencia)
     if (scored.ranking.length === 0) {
       console.log('pontuacao desligada: sem bloco scoring em routing.json')
       return

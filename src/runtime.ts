@@ -389,6 +389,7 @@ export class Runtime {
     needsVision = false,
     sessionId?: string,
     models?: string[],
+    latency: 'interativo' | 'lote' = 'interativo',
   ): Promise<ResolvedAgent> {
     if (explicit && explicit !== autoAgent) return { agent: this.profile(explicit).name, routed: null, by: 'fixed' }
     const ctx = { text, workspace }
@@ -402,7 +403,7 @@ export class Runtime {
       if (intent && !needsVision) routed = this.ruleForRun(route(this.repo.routing, ctx, intent), delega, models)
       if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'classifier' }
     }
-    const scored = this.scoreFor(intent, text, undefined, needsVision, delega, contexto, models)
+    const scored = this.scoreFor(intent, text, undefined, needsVision, delega, contexto, models, latency)
     if (scored.chosen) return { agent: this.profile(scored.chosen.agent).name, routed: null, by: 'score', intent, ranking: scored.ranking }
     const padrao = models?.[0] ?? this.repo.routing.default_agent
     if (padrao) return { agent: this.profile(padrao).name, routed: null, by: 'default', intent, ranking: scored.ranking }
@@ -441,6 +442,7 @@ export class Runtime {
     needsDelegates = false,
     contextTokens?: number,
     models?: string[],
+    latency: 'interativo' | 'lote' = 'interativo',
   ): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
     const scoring = this.repo.routing.scoring
     if (!scoring) return { chosen: null, ranking: [] }
@@ -455,6 +457,7 @@ export class Runtime {
       maxOutput: p.max_output,
       vision: p.routing.vision,
       delegates: p.delegates.length > 0,
+      latency: p.routing.latency,
     }))
     return scoreAgents(candidates, (provider, model) => this.priceOrNull(provider, model, at), scoring, {
       intent,
@@ -462,6 +465,7 @@ export class Runtime {
       contextTokens,
       needsVision,
       needsDelegation: needsDelegates,
+      latency,
       unavailable: (name) => this.unavailableReason(name),
       adjustments: this.feedbackAdjustments(intent),
     })
@@ -668,7 +672,7 @@ export class Runtime {
     const candidatos = papel ? this.role(papel).models : undefined
     const chosen = req.agentOverride
       ? { agent: this.profile(req.agentOverride).name, routed: null, by: 'override' as const }
-      : await this.resolveAgent(session.agent, req.text, session.workspace, (req.images?.length ?? 0) > 0, req.sessionId, candidatos)
+      : await this.resolveAgent(session.agent, req.text, session.workspace, (req.images?.length ?? 0) > 0, req.sessionId, candidatos, session.origin === 'user' ? 'interativo' : 'lote')
     const base = this.profileWithRole(chosen.agent, papel)
     this.db
       .prepare('INSERT OR REPLACE INTO runs (run_id, session_id, agent, role, intent, routed_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
