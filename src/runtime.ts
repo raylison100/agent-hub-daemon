@@ -942,15 +942,24 @@ export class Runtime {
     return nome ? this.repo.profiles.get(nome) : undefined
   }
 
+
+  /** Quem resume: o modelo declarado no perfil enquanto a conversa couber nele, senao o remoto do improver, que tem janela grande. */
+  private summarizerThatFits(name: string, transcriptTokens: number): AgentProfile {
+    const escolhido = this.profile(name)
+    if (transcriptTokens < escolhido.context.window * 0.7) return escolhido
+    const remoto = this.repo.routing.prompt_improver?.remote_agent
+    const alternativa = remoto ? this.repo.profiles.get(remoto) : undefined
+    return alternativa && alternativa.context.window > escolhido.context.window ? alternativa : escolhido
+  }
   /** Sumarizador para compactacao: usa o perfil em `context.summarizer`, com custo lancado no ledger sob o run pai. */
   private summarizerFor(profile: AgentProfile, sessionId: string, parentRunId: string): Summarizer | undefined {
     const name = profile.context.summarizer
     if (!name) return undefined
-    const summarizer = this.repo.profiles.get(name)
-    if (!summarizer) return undefined
+    if (!this.repo.profiles.get(name)) return undefined
     return async (messages: Message[]) => {
-      const adapter = createAdapter(summarizer)
       const transcript = messages.map(renderForSummary).join('\n')
+      const summarizer = this.summarizerThatFits(name, approxTokens(transcript))
+      const adapter = createAdapter(summarizer)
       const result = await adapter.chat({
         system: summarySystem,
         messages: [{ role: 'user', parts: [{ type: 'text', text: `Conversa:\n\n${transcript}\n\nResuma.` }] }],
