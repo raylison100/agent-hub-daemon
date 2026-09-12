@@ -107,6 +107,13 @@ function migrate(db: DatabaseType): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS resumes (
+      session_id TEXT PRIMARY KEY,
+      run_id TEXT,
+      json TEXT NOT NULL,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS runs (
       run_id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,

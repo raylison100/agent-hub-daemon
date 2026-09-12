@@ -27,6 +27,11 @@ import {
   isDestructive,
   loadAgentsRepo,
   messageText,
+  parseResume,
+  renderResume,
+  resumePrompt,
+  resumeSystem,
+  resumeTranscript,
   nativeTools,
   needsDelegation,
   classifyIntent,
@@ -51,6 +56,7 @@ import {
   type RoutedBy,
   type RouteResult,
   type RunEvent,
+  type SessionResumeRecord,
   type ScoreCandidate,
   type ScoredAgent,
   type StatsOverview,
@@ -822,6 +828,59 @@ export class Runtime {
     } finally {
       this.activeBudgets.delete(runId)
     }
+  }
+
+  /** Ponto de retomada da sessao, escrito pelo modelo barato do perfil. Roda depois do run, sem segurar a resposta, e falha em silencio. */
+  async makeResume(sessionId: string, runId: string | null): Promise<SessionResumeRecord | null> {
+    const session = this.store.get(sessionId)
+    if (!session) return null
+    const history = this.store.history(sessionId)
+    if (history.length < 2) return null
+    const escritor = this.resumeWriter(session.agent)
+    if (!escritor) return null
+    const adapter = createAdapter(escritor)
+    const prompt = resumePrompt(resumeTranscript(history))
+    let ultimo = ''
+    for (let tentativa = 0; tentativa < 2; tentativa++) {
+      const texto = tentativa === 0 ? prompt : `${prompt}\n\nA resposta anterior nao era JSON valido: ${ultimo}. Responda so o JSON.`
+      const result = await adapter.chat({
+        system: resumeSystem,
+        messages: [{ role: 'user', parts: [{ type: 'text', text: texto }] }],
+        tools: [],
+        maxOutput: Math.min(escritor.max_output, 1200),
+        reasoning: 'low',
+        systemCacheTtl: '5m',
+        providerOptions: escritor.provider_options,
+        signal: AbortSignal.timeout(120_000),
+      })
+      this.ledger.record({
+        ts: Date.now(),
+        sessionId,
+        runId: randomUUID(),
+        parentRunId: runId ?? undefined,
+        step: 0,
+        agent: escritor.name,
+        provider: adapter.provider,
+        model: result.model,
+        usage: result.usage,
+        costUsd: this.pricing.cost(adapter.provider, result.model, result.usage),
+        pricingVersion: this.pricing.version,
+        latencyMs: result.latencyMs,
+        stopReason: 'resume',
+      })
+      const bruto = messageText(result.message)
+      const parsed = parseResume(bruto)
+      if (parsed) return this.store.saveResume(sessionId, runId, parsed, renderResume(parsed))
+      ultimo = bruto.slice(0, 200)
+    }
+    return null
+  }
+
+  /** Quem escreve a retomada: o summarizer do perfil da sessao, ou o do improver quando a sessao esta em automatico. */
+  private resumeWriter(agent: string): AgentProfile | undefined {
+    const perfil = agent === autoAgent ? undefined : this.repo.profiles.get(agent)
+    const nome = perfil?.context.summarizer ?? this.repo.routing.prompt_improver?.agent
+    return nome ? this.repo.profiles.get(nome) : undefined
   }
 
   /** Sumarizador para compactacao: usa o perfil em `context.summarizer`, com custo lancado no ledger sob o run pai. */

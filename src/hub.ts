@@ -211,6 +211,9 @@ export class ConnectionHub {
         this.broadcast({ type: 'session.deleted', session_id: frame.session_id })
         return
       }
+      case 'session.resume':
+        send({ type: 'session.resume', session_id: frame.session_id, resume: runtime.store.resume(frame.session_id) })
+        return
       case 'session.fork': {
         const session = runtime.store.fork(frame.session_id)
         if (!session) throw new Error('sessao nao encontrada')
@@ -226,6 +229,7 @@ export class ConnectionHub {
           session,
           messages: runtime.store.history(frame.session_id),
           children: runtime.store.children(frame.session_id).map((c) => ({ run_id: c.runId, parent_run_id: c.parentRunId, agent: c.agent, messages: c.messages })),
+          resume: runtime.store.resume(frame.session_id),
         })
         return
       }
@@ -492,6 +496,16 @@ export class ConnectionHub {
   }
 
 
+  /** Escreve o ponto de retomada em segundo plano e avisa os clientes. Falha aqui nao atrapalha o run que ja terminou. */
+  private async gerarRetomada(sessionId: string, runId: string): Promise<void> {
+    try {
+      const registro = await this.runtime.makeResume(sessionId, runId)
+      if (registro) this.broadcast({ type: 'session.resume', session_id: sessionId, resume: registro })
+    } catch (err) {
+      console.error(`retomada da sessao ${sessionId}: ${describe(err)}`)
+    }
+  }
+
   private startRun(
     sessionId: string,
     text: string,
@@ -564,6 +578,7 @@ export class ConnectionHub {
         this.runs.delete(runId)
         const session = runtime.store.get(sessionId)
         if (session) this.broadcast({ type: 'session.updated', session })
+        void this.gerarRetomada(sessionId, runId)
       })
   }
 }

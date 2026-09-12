@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import type { Ledger, Message, RunEvent, RunMode, SessionSummary } from '@agent-hub/core'
+import type { Ledger, Message, RunEvent, RunMode, SessionResume, SessionResumeRecord, SessionSummary } from '@agent-hub/core'
 
 interface SessionRow {
   id: string
@@ -95,6 +95,7 @@ export class SessionStore {
       this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(id)
       this.db.prepare('DELETE FROM tool_events WHERE session_id = ?').run(id)
       this.db.prepare('DELETE FROM approvals WHERE session_id = ?').run(id)
+      this.db.prepare('DELETE FROM resumes WHERE session_id = ?').run(id)
       return this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id).changes
     })
     return tx() > 0
@@ -107,6 +108,8 @@ export class SessionStore {
     const copy = this.create(source.agent, source.workspace, `Copia de ${source.title}`.slice(0, 120), 'user')
     const history = this.history(id)
     if (history.length > 0) this.appendMessages(copy.id, `fork-${id}`, history)
+    const ponto = this.resume(id)
+    if (ponto) this.saveResume(copy.id, null, ponto.resume, ponto.text)
     return this.get(copy.id)
   }
 
@@ -189,6 +192,30 @@ export class SessionStore {
 
   resolveApproval(id: string, decision: string): void {
     this.db.prepare('UPDATE approvals SET decision = ?, resolved_at = ? WHERE id = ?').run(decision, Date.now(), id)
+  }
+
+  /** Guarda o ponto de retomada da sessao, um por sessao, sempre o mais recente. */
+  saveResume(sessionId: string, runId: string | null, resume: SessionResume, text: string): SessionResumeRecord {
+    const now = Date.now()
+    this.db
+      .prepare(
+        'INSERT INTO resumes (session_id, run_id, json, text, created_at) VALUES (?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(session_id) DO UPDATE SET run_id = excluded.run_id, json = excluded.json, text = excluded.text, created_at = excluded.created_at',
+      )
+      .run(sessionId, runId, JSON.stringify(resume), text, now)
+    return { sessionId, runId, resume, text, createdAt: now }
+  }
+
+  resume(sessionId: string): SessionResumeRecord | null {
+    const row = this.db.prepare('SELECT * FROM resumes WHERE session_id = ?').get(sessionId) as
+      | { session_id: string; run_id: string | null; json: string; text: string; created_at: number }
+      | undefined
+    if (!row) return null
+    try {
+      return { sessionId: row.session_id, runId: row.run_id, resume: JSON.parse(row.json) as SessionResume, text: row.text, createdAt: row.created_at }
+    } catch {
+      return null
+    }
   }
 
   private summarize(row: SessionRow): SessionSummary {
