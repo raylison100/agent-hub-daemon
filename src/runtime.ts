@@ -73,6 +73,7 @@ import {
   type ToolDefinition,
 } from '@agent-hub/core'
 import type { Database as DatabaseType } from 'better-sqlite3'
+import { AuthStore } from './auth.js'
 import { McpOAuth } from './mcp-oauth.js'
 import { ApprovalQueue, type ApprovalDecision, type PendingApproval } from './approvals.js'
 import type { AutomationRunner } from './automation.js'
@@ -190,6 +191,7 @@ export class Runtime {
   readonly terminals = new Terminals()
   readonly knowledge: KnowledgeStore
   readonly oauth: McpOAuth
+  readonly auth: AuthStore
   automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
@@ -206,6 +208,7 @@ export class Runtime {
     this.knowledge = new KnowledgeStore(db)
     this.registry.register(knowledgeTool(this.knowledge))
     this.oauth = new McpOAuth(this)
+    this.auth = new AuthStore(db)
     this.otel = config.otelEndpoint
       ? new OtelExporter({ endpoint: config.otelEndpoint, headers: config.otelHeaders, serviceName: 'agent-hub-daemon', log: (m) => console.error(m) })
       : null

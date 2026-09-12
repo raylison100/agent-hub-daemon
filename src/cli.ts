@@ -324,6 +324,21 @@ program
     console.log(`total\t${total.costUsd.toFixed(4)}\t${total.calls}`)
   })
 
+
+program
+  .command('senha')
+  .description('Define a senha do acesso remoto, lida da entrada padrao para nao ficar no historico do shell')
+  .action(async () => {
+    const runtime = new Runtime(loadConfig())
+    const { AuthStore } = await import('./auth.js')
+    const auth = new AuthStore(runtime.db)
+    const pedacos: Buffer[] = []
+    for await (const parte of process.stdin) pedacos.push(Buffer.from(parte as Buffer))
+    const senha = Buffer.concat(pedacos).toString('utf8').trim()
+    if (!senha) throw new Error('nada na entrada padrao: use  echo -n "sua senha" | agent-hub-daemon senha')
+    auth.definirSenha(senha)
+    console.log('senha definida. Dispositivos de fora entram com ela e recebem credencial propria.')
+  })
 program
   .command('chat')
   .description('Conversa interativa com um agente, aprovando ferramentas pelo terminal')

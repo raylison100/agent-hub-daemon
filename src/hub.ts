@@ -72,18 +72,40 @@ export class ConnectionHub {
   private async dispatch(conn: Conn, frame: ClientFrame): Promise<void> {
     const runtime = this.runtime
     const send = (f: ServerFrame) => conn.send(f)
+    if (frame.type === 'auth.login') {
+      if (frame.protocol_version !== protocolVersion) {
+        send({ type: 'auth.error', message: `protocolo ${frame.protocol_version} incompativel com ${protocolVersion}` })
+        return
+      }
+      try {
+        if (!runtime.auth.conferirSenha(frame.password, conn.client || 'desconhecido')) {
+          send({ type: 'auth.error', message: 'senha incorreta' })
+          return
+        }
+      } catch (err) {
+        send({ type: 'auth.error', message: describe(err) })
+        return
+      }
+      const criado = runtime.auth.criarDispositivo(frame.device_name)
+      conn.authed = true
+      conn.client = frame.client
+      send({ type: 'auth.credential', credential: criado.credential, device_id: criado.id, device: runtime.config.deviceName })
+      send({ type: 'auth.ok', protocol_version: protocolVersion, device: runtime.config.deviceName, senha_definida: true })
+      return
+    }
     if (frame.type === 'auth') {
       if (frame.protocol_version !== protocolVersion) {
         send({ type: 'auth.error', message: `protocolo ${frame.protocol_version} incompativel com ${protocolVersion}` })
         return
       }
-      if (!safeEqual(frame.token, this.token)) {
+      const dispositivo = safeEqual(frame.token, this.token) ? null : runtime.auth.conferirDispositivo(frame.token)
+      if (!safeEqual(frame.token, this.token) && dispositivo === null) {
         send({ type: 'auth.error', message: 'token invalido' })
         return
       }
       conn.authed = true
-      conn.client = frame.client
-      send({ type: 'auth.ok', protocol_version: protocolVersion, device: runtime.config.deviceName })
+      conn.client = dispositivo ? `${frame.client} (${dispositivo})` : frame.client
+      send({ type: 'auth.ok', protocol_version: protocolVersion, device: runtime.config.deviceName, senha_definida: runtime.auth.temSenha() })
       return
     }
     if (!conn.authed) {
@@ -130,6 +152,17 @@ export class ConnectionHub {
         send(this.hooksFrame())
         return
       }
+      case 'auth.password':
+        runtime.auth.definirSenha(frame.password)
+        send({ type: 'auth.devices', devices: runtime.auth.dispositivos(), senha_definida: true })
+        return
+      case 'auth.devices':
+        send({ type: 'auth.devices', devices: runtime.auth.dispositivos(), senha_definida: runtime.auth.temSenha() })
+        return
+      case 'auth.revoke':
+        if (!runtime.auth.revogar(frame.device_id)) throw new Error('dispositivo nao encontrado')
+        send({ type: 'auth.devices', devices: runtime.auth.dispositivos(), senha_definida: runtime.auth.temSenha() })
+        return
       case 'health.list':
         send({ type: 'health.list', items: this.health() })
         return
