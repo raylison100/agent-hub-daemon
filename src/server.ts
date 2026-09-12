@@ -1,3 +1,4 @@
+import fastifyStatic from '@fastify/static'
 import websocket from '@fastify/websocket'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { protocolVersion, type ClientFrame, type ServerFrame } from '@agent-hub/core'
@@ -35,6 +36,23 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
   hub.triggers = triggers
 
   app.get('/health', async () => ({ ok: true, device: runtime.config.deviceName, protocol_version: protocolVersion }))
+
+  app.get('/pair/local', async (req, reply) => {
+    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'so a propria maquina pode pedir o token sem pareamento' })
+    const origin = req.headers.origin
+    if (!originPermitida(origin, req.headers.host)) return reply.code(403).send({ error: `origem nao permitida: ${origin}` })
+    if (origin && origemDeApp(origin)) reply.header('access-control-allow-origin', origin)
+    return { url: `ws://${req.headers.host ?? `127.0.0.1:${runtime.config.port}`}/ws`, token, device: runtime.config.deviceName }
+  })
+
+  if (runtime.config.webDir) {
+    await app.register(fastifyStatic, { root: runtime.config.webDir })
+    app.setNotFoundHandler((req, reply) => {
+      if (req.method !== 'GET' || req.url.startsWith('/ws') || req.url.startsWith('/pair')) return reply.code(404).send({ error: 'nao encontrado' })
+      return reply.sendFile('index.html')
+    })
+    log(`interface em http://${runtime.config.host}:${runtime.config.port}`)
+  }
 
   app.get('/ws', { websocket: true }, (socket) => {
     const conn: Conn = { authed: false, client: '', send: (frame: ServerFrame) => socket.send(JSON.stringify(frame)) }
@@ -81,4 +99,22 @@ function relayFor(config: DaemonConfig, relay: RelayCredentials | undefined, hub
     hub,
     (id, headers, body) => triggers.fire(id, headers, body),
   )
+}
+
+/** Endereco da propria maquina, unico caso em que o daemon entrega o token sem pareamento. */
+function isLoopback(ip: string): boolean {
+  const limpo = ip.replace(/^::ffff:/, '')
+  return limpo === '127.0.0.1' || limpo === '::1' || limpo.startsWith('127.')
+}
+
+/** Sem origem (app nativo), a propria interface do daemon ou o webview do Tauri. Pagina de outro site nao passa. */
+function originPermitida(origin: string | undefined, host: string | undefined): boolean {
+  if (!origin) return true
+  if (origemDeApp(origin)) return true
+  return host !== undefined && (origin === `http://${host}` || origin === `https://${host}`)
+}
+
+/** Webview do app desktop, que fala com o daemon de outra origem e por isso precisa do cabecalho de CORS. */
+function origemDeApp(origin: string): boolean {
+  return origin === 'tauri://localhost' || origin === 'https://tauri.localhost' || origin === 'http://tauri.localhost'
 }

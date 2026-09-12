@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parse } from 'smol-toml'
 import { parseOtelHeaders } from './otel.js'
 
@@ -14,6 +15,7 @@ export interface DaemonConfig {
   workspaces: string[]
   approvalTimeoutMs: number
   deviceName: string
+  webDir?: string
   relayUrl?: string
   otelEndpoint?: string
   otelHeaders: Record<string, string>
@@ -27,6 +29,7 @@ interface RawConfig {
   workspaces?: string[]
   approval_timeout_ms?: number
   device_name?: string
+  web_dir?: string
   relay_url?: string
   otel_endpoint?: string
   otel_headers?: Record<string, string>
@@ -89,6 +92,7 @@ export function loadConfig(): DaemonConfig {
     workspaces: (raw.workspaces ?? []).map((w) => resolve(w)),
     approvalTimeoutMs: raw.approval_timeout_ms ?? 10 * 60 * 1000,
     deviceName: raw.device_name ?? 'este-computador',
+    webDir: resolveWebDir(raw.web_dir),
     relayUrl: process.env.AGENT_HUB_RELAY_URL ?? raw.relay_url,
     otelEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? raw.otel_endpoint,
     otelHeaders: process.env.OTEL_EXPORTER_OTLP_HEADERS ? parseOtelHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS) : (raw.otel_headers ?? {}),
@@ -133,4 +137,10 @@ export function exampleConfig(): string {
     '# authorization = "Bearer ..."',
     '',
   ].join('\n')
+}
+
+/** Pasta do bundle da web servido pelo proprio daemon. Sem nada no config, usa o `web/dist` do repositorio ao lado do daemon. */
+function resolveWebDir(raw: string | undefined): string | undefined {
+  const candidates = raw ? [resolve(raw)] : [resolve(fileURLToPath(new URL('../../web/dist', import.meta.url)))]
+  return candidates.find((c) => existsSync(join(c, 'index.html')))
 }
