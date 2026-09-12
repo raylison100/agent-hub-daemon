@@ -2,6 +2,7 @@ import fastifyStatic from '@fastify/static'
 import websocket from '@fastify/websocket'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { protocolVersion, type ClientFrame, type ServerFrame } from '@agent-hub/core'
+import { registerA2A } from './a2a.js'
 import { AutomationRunner } from './automation.js'
 import type { DaemonConfig } from './config.js'
 import { ConnectionHub, type Conn } from './hub.js'
@@ -45,6 +46,31 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
     return { url: `ws://${req.headers.host ?? `127.0.0.1:${runtime.config.port}`}/ws`, token, device: runtime.config.deviceName }
   })
 
+
+  app.get('/oauth/start', async (req, reply) => {
+    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'so a propria maquina inicia autorizacao' })
+    const server = (req.query as { server?: string }).server
+    if (!server) return reply.code(400).send({ error: 'informe ?server=<nome>' })
+    try {
+      const url = await runtime.oauth.start(server, redirectUri(req.headers.host, runtime.config.port))
+      return reply.redirect(url)
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  app.get('/oauth/callback', async (req, reply) => {
+    const { code, state, error } = req.query as { code?: string; state?: string; error?: string }
+    if (error) return reply.type('text/html').send(pagina(`Autorizacao recusada: ${error}`))
+    if (!code || !state) return reply.code(400).type('text/html').send(pagina('Resposta sem code ou state.'))
+    try {
+      const server = await runtime.oauth.finish(state, code, redirectUri(req.headers.host, runtime.config.port))
+      hub.broadcast({ type: 'mcp.authorized', server })
+      return reply.type('text/html').send(pagina(`Servidor ${server} autorizado. Pode fechar esta aba e voltar ao Agent Hub.`))
+    } catch (err) {
+      return reply.code(400).type('text/html').send(pagina(err instanceof Error ? err.message : String(err)))
+    }
+  })
   if (runtime.config.webDir) {
     await app.register(fastifyStatic, { root: runtime.config.webDir })
     app.setNotFoundHandler((req, reply) => {
@@ -69,6 +95,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
       void hub.handle(conn, frame)
     })
   })
+  registerA2A(app, runtime, hub, token)
 
   await app.listen({ host: runtime.config.host, port: runtime.config.port })
   scheduler.start()
@@ -117,4 +144,12 @@ function originPermitida(origin: string | undefined, host: string | undefined): 
 /** Webview do app desktop, que fala com o daemon de outra origem e por isso precisa do cabecalho de CORS. */
 function origemDeApp(origin: string): boolean {
   return origin === 'tauri://localhost' || origin === 'https://tauri.localhost' || origin === 'http://tauri.localhost'
+}
+
+function redirectUri(host: string | undefined, port: number): string {
+  return `http://${host ?? `127.0.0.1:${port}`}/oauth/callback`
+}
+
+function pagina(mensagem: string): string {
+  return `<!doctype html><meta charset="utf-8"><title>Agent Hub</title><body style="font-family: system-ui; padding: 40px; background: #15171c; color: #e8e9ec"><p>${mensagem}</p></body>`
 }

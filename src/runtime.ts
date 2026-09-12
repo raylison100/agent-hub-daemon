@@ -73,6 +73,7 @@ import {
   type ToolDefinition,
 } from '@agent-hub/core'
 import type { Database as DatabaseType } from 'better-sqlite3'
+import { McpOAuth } from './mcp-oauth.js'
 import { ApprovalQueue, type ApprovalDecision, type PendingApproval } from './approvals.js'
 import type { AutomationRunner } from './automation.js'
 import type { DaemonConfig } from './config.js'
@@ -188,6 +189,7 @@ export class Runtime {
   readonly secrets: SecretStore
   readonly terminals = new Terminals()
   readonly knowledge: KnowledgeStore
+  readonly oauth: McpOAuth
   automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
@@ -203,6 +205,7 @@ export class Runtime {
     KnowledgeStore.migrate(db)
     this.knowledge = new KnowledgeStore(db)
     this.registry.register(knowledgeTool(this.knowledge))
+    this.oauth = new McpOAuth(this)
     this.otel = config.otelEndpoint
       ? new OtelExporter({ endpoint: config.otelEndpoint, headers: config.otelHeaders, serviceName: 'agent-hub-daemon', log: (m) => console.error(m) })
       : null
@@ -651,9 +654,11 @@ export class Runtime {
   /** Conecta um servidor MCP declarado e registra suas ferramentas. Servidor desligado nao conecta. */
   async ensureMcpServer(name: string): Promise<void> {
     const config = this.repo.mcp.servers[name]
-    if (!config) throw new Error(`servidor MCP nao configurado: ${name}`)
-    if (!config.enabled) throw new Error(`servidor MCP desligado: ${name}`)
-    this.registry.registerAll(await this.mcp.connect(name, config))
+    if (!config) throw new Error(`servidor MCP nao configurado: `)
+    if (!config.enabled) throw new Error(`servidor MCP desligado: `)
+    const bearer = config.oauth ? await this.oauth.bearer(name) : undefined
+    if (config.oauth && !bearer) throw new Error(`servidor  pede autorizacao: abra Conectores e clique em Autorizar`)
+    this.registry.registerAll(await this.mcp.connect(name, config, bearer))
   }
 
   overrideBudget(runId: string, scope: BudgetScope, limitUsd: number): boolean {

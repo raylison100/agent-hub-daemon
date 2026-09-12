@@ -531,6 +531,7 @@ export class ConnectionHub {
       tools: this.runtime.registry.names().filter((t) => t.startsWith(`${name}__`)).length,
       error: this.mcpErrors.get(name) ?? null,
       agents: agentsUsing(this.runtime.config.agentsDir, name),
+      oauth: cfg.oauth ? (this.runtime.oauth.autorizado(name) ? ("autorizado" as const) : ("pendente" as const)) : null,
     }))
   }
 
