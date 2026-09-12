@@ -3,7 +3,7 @@ import { Command } from 'commander'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
-import { classifyIntent, needsDelegation, route } from '@agent-hub/core'
+import { approxTokens, classifyIntent, needsDelegation, route } from '@agent-hub/core'
 import type { ReportGroup, RunEvent } from '@agent-hub/core'
 import type { PendingApproval } from './approvals.js'
 import { AutomationRunner } from './automation.js'
@@ -210,11 +210,15 @@ program
   .description('Mostra a decisao do roteador para um pedido, com o ranking custo x capacidade, sem gastar tokens')
   .option('--at <iso>', 'simula outro instante para o preco por horario, ex.: 2026-09-14T02:30:00Z')
   .option('--imagem', 'simula um pedido com imagem anexada, que exige agente com visao')
-  .action((texto: string, opts: { at?: string; imagem?: boolean }) => {
+  .option('--contexto <tokens>', 'simula o historico ja acumulado na sessao, em tokens')
+  .action((texto: string, opts: { at?: string; imagem?: boolean; contexto?: string }) => {
     const runtime = new Runtime(loadConfig())
     const at = opts.at ? new Date(opts.at) : undefined
     if (at && Number.isNaN(at.getTime())) throw new Error(`instante invalido: ${opts.at}`)
     if (at) console.log(`simulando o instante ${at.toISOString()}`)
+    const contexto = opts.contexto === undefined ? undefined : Number(opts.contexto) + approxTokens(texto)
+    if (contexto !== undefined && !Number.isFinite(contexto)) throw new Error(`contexto invalido: ${opts.contexto}`)
+    if (contexto !== undefined) console.log(`simulando ${contexto} tokens de contexto na chamada`)
     const stale = runtime.pricingStaleness()
     if (stale) console.error(`aviso: ${stale}`)
     const intent = classifyIntent(texto, runtime.repo.routing.intents)
@@ -223,14 +227,24 @@ program
     console.log(`intencao por palavra chave: ${intent ?? 'nenhuma'}`)
     if (delega) console.log('pedido fala em subagente ou delegacao: so entram agentes que delegam')
     if (ruled) console.log(`regra: ${JSON.stringify(ruled.rule.when)} -> ${ruled.agent}`)
-    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true, delega)
+    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true, delega, contexto)
     if (scored.ranking.length === 0) {
       console.log('pontuacao desligada: sem bloco scoring em routing.json')
       return
     }
-    console.log(['agente', 'pontos', 'capacidade', 'usd/M', 'situacao'].join('	'))
+    console.log(['agente', 'pontos', 'capacidade', 'usd/M', 'usd na chamada', 'janela usada', 'situacao'].join('\t'))
     for (const r of scored.ranking) {
-      console.log([r.agent, r.score.toFixed(4), `${r.capability.toFixed(2)}${r.adjustment !== 0 ? ` (${r.adjustment > 0 ? '+' : ''}${r.adjustment} aprendido)` : ''}`, r.costPerMillion.toFixed(2), r.excluded ?? (r.agent === scored.chosen?.agent && !ruled ? 'escolhido' : 'apto')].join('	'))
+      console.log(
+        [
+          r.agent,
+          r.score.toFixed(4),
+          `${r.capability.toFixed(2)}${r.adjustment !== 0 ? ` (${r.adjustment > 0 ? '+' : ''}${r.adjustment} aprendido)` : ''}`,
+          r.costPerMillion.toFixed(2),
+          r.estimatedUsd.toFixed(5),
+          `${Math.round(r.contextUse * 100)}%`,
+          r.excluded ?? (r.agent === scored.chosen?.agent && !ruled ? 'escolhido' : 'apto'),
+        ].join('\t'),
+      )
     }
     for (const p of runtime.repo.profiles.values()) {
       const m = runtime.pricing.multiplierAt(p.provider, p.model, at)

@@ -14,6 +14,7 @@ import {
   ToolRegistry,
   activatedSkills,
   apiKeyEnv,
+  approxMessageTokens,
   approxTokens,
   budgetFor,
   classifierPrompt,
@@ -306,10 +307,17 @@ export class Runtime {
   }
 
   /** Escolhe o agente: explicito vence; depois regras por palavra chave; classificador por modelo; pontuacao custo x capacidade; por fim o `default_agent`. `auto` significa decidir a cada mensagem. */
-  async resolveAgent(explicit: string | undefined, text: string, workspace: string, needsVision = false): Promise<ResolvedAgent> {
+  async resolveAgent(
+    explicit: string | undefined,
+    text: string,
+    workspace: string,
+    needsVision = false,
+    sessionId?: string,
+  ): Promise<ResolvedAgent> {
     if (explicit && explicit !== autoAgent) return { agent: this.profile(explicit).name, routed: null, by: 'fixed' }
     const ctx = { text, workspace }
     const delega = needsDelegation(text)
+    const contexto = this.contextTokens(sessionId, text)
     let routed = needsVision ? null : this.ruleThatDelegates(route(this.repo.routing, ctx), delega)
     if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'rule' }
     let intent = classifyIntent(text, this.repo.routing.intents)
@@ -318,10 +326,17 @@ export class Runtime {
       if (intent && !needsVision) routed = this.ruleThatDelegates(route(this.repo.routing, ctx, intent), delega)
       if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'classifier' }
     }
-    const scored = this.scoreFor(intent, text, undefined, needsVision, delega)
+    const scored = this.scoreFor(intent, text, undefined, needsVision, delega, contexto)
     if (scored.chosen) return { agent: this.profile(scored.chosen.agent).name, routed: null, by: 'score', intent, ranking: scored.ranking }
     if (this.repo.routing.default_agent) return { agent: this.profile(this.repo.routing.default_agent).name, routed: null, by: 'default', intent, ranking: scored.ranking }
     throw new Error('nenhuma regra casou, nenhum agente pontuou e nao ha default_agent em routing.json')
+  }
+
+  /** Tokens que a proxima chamada leva: historico que ainda vai ao modelo mais o pedido novo. */
+  private contextTokens(sessionId: string | undefined, text: string): number {
+    const pedido = approxTokens(text)
+    if (!sessionId) return pedido
+    return pedido + approxMessageTokens(this.store.history(sessionId))
   }
 
   /** Regra so vale se o agente dela der conta do pedido; pedido de subagente vai para quem delega. */
@@ -345,6 +360,7 @@ export class Runtime {
     at?: Date,
     needsVision = false,
     needsDelegates = false,
+    contextTokens?: number,
   ): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
     const scoring = this.repo.routing.scoring
     if (!scoring) return { chosen: null, ranking: [] }
@@ -362,6 +378,7 @@ export class Runtime {
     return scoreAgents(candidates, (provider, model) => this.priceOrNull(provider, model, at), scoring, {
       intent,
       promptTokens: approxTokens(text),
+      contextTokens,
       needsVision,
       needsDelegation: needsDelegates,
       unavailable: (name) => this.unavailableReason(name),
@@ -563,7 +580,7 @@ export class Runtime {
     const runId = req.runId ?? randomUUID()
     const chosen = req.agentOverride
       ? { agent: this.profile(req.agentOverride).name, routed: null, by: 'override' as const }
-      : await this.resolveAgent(session.agent, req.text, session.workspace, (req.images?.length ?? 0) > 0)
+      : await this.resolveAgent(session.agent, req.text, session.workspace, (req.images?.length ?? 0) > 0, req.sessionId)
     const base = this.profile(chosen.agent)
     this.db
       .prepare('INSERT OR REPLACE INTO runs (run_id, session_id, agent, intent, routed_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
