@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -163,6 +164,26 @@ export class ConnectionHub {
         if (!runtime.auth.revogar(frame.device_id)) throw new Error('dispositivo nao encontrado')
         send({ type: 'auth.devices', devices: runtime.auth.dispositivos(), senha_definida: runtime.auth.temSenha() })
         return
+      case 'daemon.reload': {
+        runtime.reload()
+        send({ type: 'daemon.status', supervisionado: supervisionado(), reiniciando: false, detalhe: 'configuracao recarregada: perfis, papeis, skills, precos, conectores e agendamentos' })
+        this.broadcast({ type: 'agents.list', agents: runtime.agents(), roles: runtime.roles(), errors: runtime.repo.errors })
+        this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
+        return
+      }
+      case 'daemon.restart': {
+        const sob = supervisionado()
+        send({
+          type: 'daemon.status',
+          supervisionado: sob,
+          reiniciando: true,
+          detalhe: sob
+            ? 'reiniciando pelo systemd; a interface reconecta sozinha em alguns segundos'
+            : 'o daemon nao esta sob supervisao: vai subir um processo novo e sair, e se o novo falhar voce precisa rodar make daemon',
+        })
+        setTimeout(() => this.reiniciar(sob), 300)
+        return
+      }
       case 'health.list':
         send({ type: 'health.list', items: this.health() })
         return
@@ -580,6 +601,23 @@ export class ConnectionHub {
   }
 
   /** Conecta sob demanda e guarda a ultima falha, para a tela de conectores mostrar o motivo. */
+
+  /**
+   * Reinicio de verdade. Sob systemd basta sair, que o Restart=always sobe outro; sem supervisao, larga um
+   * processo novo com os mesmos argumentos antes de sair, para nao deixar voce sem daemon nenhum.
+   */
+  private reiniciar(sob: boolean): void {
+    if (!sob) {
+      const filho = spawn(process.execPath, process.argv.slice(1), {
+        cwd: process.cwd(),
+        env: process.env,
+        detached: true,
+        stdio: 'ignore',
+      })
+      filho.unref()
+    }
+    process.exit(0)
+  }
   /** Conecta um conector guardando o ultimo erro, para a tela dizer Falhou com o motivo em vez de Conectando para sempre. */
   async connectMcp(name: string): Promise<void> {
     try {
@@ -785,4 +823,9 @@ function safeEqual(a: string, b: string): boolean {
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** O daemon esta sob um supervisor que o levanta de novo: systemd marca a variavel INVOCATION_ID no processo. */
+function supervisionado(): boolean {
+  return Boolean(process.env.INVOCATION_ID)
 }

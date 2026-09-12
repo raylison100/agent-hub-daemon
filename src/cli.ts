@@ -405,6 +405,9 @@ function printEvent(e: RunEvent): void {
     case 'compaction':
       console.log(`\n[compactacao ${e.mode}] ${e.before} para ${e.after} tokens estimados`)
       return
+    case 'tools_selected':
+      console.log(`\n[ferramentas] ${e.kept} enviadas, ${e.dropped} fora, ${e.tokens} tokens de ${e.budget} de teto`)
+      return
     case 'mcp_skipped':
       console.log(`\n[conectores fora] ${e.servers.map((s) => `${s.name}: ${s.reason}`).join(' | ')}`)
       return
