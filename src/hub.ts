@@ -1,7 +1,19 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { isRepoRoot, protocolVersion, resolveInside, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
+import {
+  contextDir,
+  decisionsDir,
+  isRepoRoot,
+  listContextFiles,
+  memoryDir,
+  protocolVersion,
+  resolveInside,
+  specsDir,
+  type ClientFrame,
+  type RunMode,
+  type ServerFrame,
+} from '@agent-hub/core'
 import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
@@ -98,6 +110,31 @@ export class ConnectionHub {
           .map((e) => e.name)
           .sort((a, b) => a.localeCompare(b))
         send({ type: 'workspace.list', path: target, dirs, repo: isRepoRoot(target), repos: dirs.filter((d) => isRepoRoot(join(target, d))) })
+        return
+      }
+      case 'context.list': {
+        const dir = runtime.assertWorkspace(frame.workspace)
+        send({
+          type: 'context.list',
+          workspace: dir,
+          memories: runtime.contextFiles(dir, memoryDir),
+          specs: listContextFiles(dir, specsDir),
+          decisions: listContextFiles(dir, decisionsDir),
+        })
+        return
+      }
+      case 'context.delete': {
+        const dir = runtime.assertWorkspace(frame.workspace)
+        const alvo = resolveInside(dir, frame.file)
+        if (!/\.md$/.test(alvo) || !alvo.includes(`${contextDir}`)) throw new Error(`so da para apagar arquivo dentro de ${contextDir}`)
+        rmSync(alvo, { force: true })
+        send({
+          type: 'context.list',
+          workspace: dir,
+          memories: runtime.contextFiles(dir, memoryDir),
+          specs: listContextFiles(dir, specsDir),
+          decisions: listContextFiles(dir, decisionsDir),
+        })
         return
       }
       case 'workspace.find': {

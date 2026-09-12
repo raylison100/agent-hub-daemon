@@ -26,6 +26,10 @@ import {
   improverPrompt,
   isDestructive,
   loadAgentsRepo,
+  listContextFiles,
+  loadMemories,
+  loadWorkspaceContext,
+  memoryDir,
   messageText,
   parseResume,
   renderResume,
@@ -47,6 +51,7 @@ import {
   type BackgroundTask,
   type Budget,
   type BudgetScope,
+  type ContextFile,
   type DelegationOptions,
   type DelegationResult,
   type ImageInput,
@@ -225,6 +230,22 @@ export class Runtime {
     }))
   }
 
+
+  /** Itens de memoria com o cabecalho lido, para a interface mostrar quando cada um entra e de que run veio. */
+  contextFiles(workspace: string, dir: string): ContextFile[] {
+    if (dir !== memoryDir) return listContextFiles(workspace, dir)
+    const itens = loadMemories(workspace)
+    return listContextFiles(workspace, dir).map((f) => {
+      const item = itens.find((m) => m.file === f.file)
+      return {
+        ...f,
+        description: item?.description,
+        data: item?.data,
+        run: item?.run,
+        activate: item?.activate ? JSON.stringify(item.activate) : undefined,
+      }
+    })
+  }
   /** Papeis carregados de agents/roles, com os modelos que podem executar cada um. */
   roles(): RoleSummary[] {
     return [...this.repo.roles.values()].map((r) => ({
@@ -671,6 +692,16 @@ export class Runtime {
     if (req.budgetOverride?.sessionUsd !== undefined) budget.override('session', req.budgetOverride.sessionUsd)
     this.activeBudgets.set(runId, budget)
     const history = this.store.history(req.sessionId)
+    const contexto = loadWorkspaceContext(workspace, { text: req.text, windowTokens: profile.context.window })
+    if (contexto.tokens > 0 || contexto.ignored.length > 0) {
+      req.emit({
+        type: 'workspace_context',
+        instructions: contexto.instructions.map((i) => i.file),
+        memories: contexto.memories.map((m) => m.name),
+        tokens: contexto.tokens,
+        ignored: contexto.ignored,
+      })
+    }
     const runner = new AgentRunner({
       adapter,
       profile,
@@ -686,6 +717,7 @@ export class Runtime {
       summarize: this.summarizerFor(profile, req.sessionId, runId),
       redact: (text) => this.redactor.redact(text),
       preloadSkills: activatedSkills(this.repo.skills, profile.skills, { text: req.text, workspace }, this.repo.routing.intents),
+      workspaceContext: contexto.text || undefined,
       delegate: (agent, task, opts) => this.delegate(req, workspace, runId, agent, task, undefined, opts),
       spawn: (agent, task, opts) => this.spawn(req, workspace, runId, agent, task, opts),
       collect: (taskId, wait) => this.collect(runId, taskId, wait),
