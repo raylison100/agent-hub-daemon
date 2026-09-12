@@ -651,8 +651,20 @@ export class Runtime {
     return target
   }
 
-  async ensureMcp(profile: AgentProfile): Promise<void> {
-    for (const name of profile.tools.mcp) await this.ensureMcpServer(name)
+  /**
+   * Conecta os servidores MCP do perfil. Um conector desconectado ou quebrado NAO derruba o run: o agente roda
+   * sem as ferramentas dele e a conversa diz quais ficaram de fora, senao desconectar um conector calaria o agente.
+   */
+  async ensureMcp(profile: AgentProfile): Promise<{ name: string; reason: string }[]> {
+    const fora: { name: string; reason: string }[] = []
+    for (const name of profile.tools.mcp) {
+      try {
+        await this.ensureMcpServer(name)
+      } catch (err) {
+        fora.push({ name, reason: err instanceof Error ? err.message : String(err) })
+      }
+    }
+    return fora
   }
 
 
@@ -682,16 +694,16 @@ export class Runtime {
     }
     return saida
   }
-  /** Conecta um servidor MCP declarado e registra suas ferramentas. Servidor desligado nao conecta. */
+
+  /** Conecta um servidor MCP declarado e registra suas ferramentas. Conector desconectado pelo usuario nao sobe. */
   async ensureMcpServer(name: string): Promise<void> {
     const config = this.repo.mcp.servers[name]
-    if (!config) throw new Error(`servidor MCP nao configurado: `)
-    if (!config.enabled) throw new Error(`servidor MCP desligado: `)
+    if (!config) throw new Error(`conector nao configurado: ${name}`)
+    if (!config.enabled) throw new Error(`conector ${name} esta desconectado; conecte em Configuracoes, Conectores`)
     const bearer = config.oauth ? await this.oauth.bearer(name) : undefined
-    if (config.oauth && !bearer) throw new Error(`servidor  pede autorizacao: abra Conectores e clique em Autorizar`)
+    if (config.oauth && !bearer) throw new Error(`conector ${name} pede autorizacao: abra Conectores e clique em Autorizar`)
     this.registry.registerAll(await this.mcp.connect(name, config, bearer, (caiu) => this.onMcpClose?.(caiu)))
   }
-
   overrideBudget(runId: string, scope: BudgetScope, limitUsd: number): boolean {
     const budget = this.activeBudgets.get(runId)
     if (!budget) return false
@@ -740,7 +752,8 @@ export class Runtime {
   }
 
   private async runWith(profile: AgentProfile, workspace: string, req: RunRequest, runId: string, parentRunId?: string): Promise<RunResult> {
-    await this.ensureMcp(profile)
+    const conectoresFora = await this.ensureMcp(profile)
+    if (conectoresFora.length > 0) req.emit({ type: 'mcp_skipped', servers: conectoresFora })
     const adapter = createAdapter(profile)
     const agentDay = this.repo.budgets.agents[profile.name]?.day_usd
     const budget = budgetFor(this.ledger, profile, { runId, sessionId: req.sessionId }, agentDay, this.repo.budgets.global_month_usd)
