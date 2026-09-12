@@ -161,7 +161,7 @@ program
     })
     if (!nome) {
       for (const w of engine.list()) {
-        console.log(`${w.name}\t${w.mode}\tentradas ${w.inputs.join(',') || '-'}\tcusto maximo ${w.maxCostUsd === null ? 'indefinido' : w.maxCostUsd.toFixed(4)} USD\t${w.description}`)
+        console.log(`${w.name}	${w.mode}	entradas ${w.inputs.join(",") || "-"}	teto do workflow ${w.budgetUsd === null ? "sem teto" : `${w.budgetUsd.toFixed(2)} USD`}	soma dos orcamentos ${w.maxCostUsd === null ? "indefinida" : `${w.maxCostUsd.toFixed(4)} USD`}	${w.description}`)
       }
       return
     }

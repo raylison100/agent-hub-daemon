@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import {
   decide,
   evaluateCondition,
+  isGateStep,
   isToolStep,
   maxWorkflowCost,
   parseExitCode,
@@ -11,8 +12,10 @@ import {
   summarizeWorkflow,
   validateCall,
   type AgentStep,
+  type GateStep,
   type ServerFrame,
   type StepResult,
+  type ToolDefinition,
   type ToolStep,
   type Workflow,
   type WorkflowSummary,
@@ -26,13 +29,35 @@ export interface WorkflowRunRequest {
 }
 
 interface WorkflowOutcome {
-  status: 'done' | 'error' | 'budget_exceeded'
+  status: 'done' | 'error' | 'budget_exceeded' | 'escalated'
   costUsd: number
   outputs: Record<string, unknown>
   error?: string
 }
 
 const ajv = new Ajv({ strict: false, allErrors: true })
+
+/** Erro de etapa que carrega o que ja foi gasto, para o total do workflow nao perder o custo de um passo que falhou. */
+class StepError extends Error {
+  constructor(
+    message: string,
+    readonly costUsd: number,
+  ) {
+    super(message)
+  }
+}
+
+const escalarTool: ToolDefinition = {
+  name: 'escalar',
+  description: 'Pede uma decisao sua quando a confianca do workflow fica abaixo do limiar.',
+  risk: 'exec',
+  inputSchema: {
+    type: 'object',
+    properties: { pergunta: { type: 'string' }, condicao: { type: 'string' } },
+    required: ['pergunta'],
+    additionalProperties: false,
+  },
+}
 
 /** Executa workflows declarativos: etapas de ferramenta sem modelo, etapas de agente com ferramentas restritas, retry limitado. */
 export class WorkflowEngine {
@@ -72,22 +97,30 @@ export class WorkflowEngine {
         try {
           result = isToolStep(step)
             ? await this.runTool(step, context, session.id, runId, workspace, wf.mode)
-            : await this.runAgent(step, context, session.id, runId, wf.mode)
+            : isGateStep(step)
+              ? await this.runGate(step, context, session.id, runId)
+              : await this.runAgent(step, context, session.id, runId, wf.mode)
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
+          if (err instanceof StepError) costUsd += err.costUsd
           this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'error', detail: message, ms: Date.now() - started })
           return this.finish(wf, session.id, runId, { status: 'error', costUsd, outputs: context, error: `etapa ${step.id}: ${message}` })
         }
         costUsd += result.cost_usd ?? 0
         context[step.id] = result
+        if (result.escalated === true) {
+          this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'escalated', detail: result.output, ms: Date.now() - started })
+          return this.finish(wf, session.id, runId, { status: 'escalated', costUsd, outputs: context, error: result.output })
+        }
         this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'done', ms: Date.now() - started, cost_usd: result.cost_usd })
 
-        if (step.retry && evaluateCondition(step.retry.when, result)) {
+        const retry = isGateStep(step) ? undefined : step.retry
+        if (retry && evaluateCondition(retry.when, result)) {
           const used = retries.get(step.id) ?? 0
-          if (used < step.retry.max) {
+          if (used < retry.max) {
             retries.set(step.id, used + 1)
-            this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'retry', detail: `volta para ${step.retry.step} (${used + 1}/${step.retry.max})` })
-            index = wf.steps.findIndex((s) => s.id === step.retry!.step)
+            this.broadcast({ type: 'workflow.step', session_id: session.id, run_id: runId, step: step.id, status: 'retry', detail: `volta para ${retry.step} (${used + 1}/${retry.max})` })
+            index = wf.steps.findIndex((s) => s.id === retry.step)
             continue
           }
         }
@@ -143,9 +176,35 @@ export class WorkflowEngine {
     return { output, exit_code: parseExitCode(output), cost_usd: 0 }
   }
 
+  /** Portao de confianca: passou, segue; nao passou, pergunta a voce e so continua com autorizacao, ou para e devolve o que ja tem. */
+  private async runGate(step: GateStep, context: Record<string, unknown>, sessionId: string, runId: string): Promise<StepResult> {
+    const passou = evaluateCondition(step.gate, context as StepResult)
+    if (passou) return { output: `portao ${step.gate}: ok`, cost_usd: 0, passed: true }
+    const pergunta = step.question ? renderTemplate(step.question, context) : `A condicao ${step.gate} nao foi atendida.`
+    if (step.on_fail === 'stop') return { output: pergunta, cost_usd: 0, passed: false, escalated: true }
+    const decision = await this.runtime.requestApproval(sessionId, runId, escalarTool, { pergunta, condicao: step.gate }, (info) =>
+      this.broadcast({
+        type: 'approval.required',
+        approval_id: info.id,
+        session_id: info.sessionId,
+        run_id: info.runId,
+        tool: info.tool,
+        args: info.args,
+        risk: info.risk,
+        expires_at: info.expiresAt,
+      }),
+    )
+    if (decision === 'allow') return { output: `${pergunta} Voce autorizou seguir.`, cost_usd: 0, passed: false, approved: true }
+    return { output: `${pergunta} Sem autorizacao para seguir.`, cost_usd: 0, passed: false, escalated: true }
+  }
+
   private async runAgent(step: AgentStep, context: Record<string, unknown>, sessionId: string, runId: string, mode: 'draft' | 'normal'): Promise<StepResult> {
     const profile = this.runtime.profile(step.agent)
-    const restricted = step.tools ? { ...profile, tools: { native: step.tools, mcp: [] } } : profile
+    const restricted = {
+      ...profile,
+      ...(step.tools ? { tools: { native: step.tools, mcp: [] } } : {}),
+      ...(step.max_steps ? { max_steps: step.max_steps } : {}),
+    }
     let prompt = renderTemplate(step.prompt, context)
     if (step.output_schema) {
       prompt += `\n\nResponda apenas com um JSON valido, sem texto ao redor, conforme este schema:\n${JSON.stringify(step.output_schema)}`
@@ -174,14 +233,14 @@ export class WorkflowEngine {
           }),
       })
       costUsd += result.costUsd
-      if (result.stop !== 'end') throw new Error(`agente parou com ${result.stop}${result.error ? `: ${result.error}` : ''}`)
+      if (result.stop !== 'end') throw new StepError(`agente parou com ${result.stop}${result.error ? `: ${result.error}` : ''}`, costUsd)
       if (!step.output_schema) return { output: result.text, cost_usd: costUsd }
       const parsed = parseJson(result.text)
       const validate = ajv.compile(step.output_schema)
       if (parsed !== undefined && validate(parsed)) return { ...(parsed as Record<string, unknown>), output: result.text, cost_usd: costUsd }
       lastError = parsed === undefined ? 'nao e JSON' : (validate.errors ?? []).map((e) => `${e.instancePath} ${e.message}`).join('; ')
     }
-    throw new Error(`saida nao atende ao schema: ${lastError}`)
+    throw new StepError(`saida nao atende ao schema: ${lastError}`, costUsd)
   }
 }
 
