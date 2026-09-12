@@ -120,6 +120,13 @@ function migrate(db: DatabaseType): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS media (
+      hash TEXT PRIMARY KEY,
+      media_type TEXT NOT NULL,
+      bytes BLOB NOT NULL,
+      size INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS resumes (
       session_id TEXT PRIMARY KEY,
       run_id TEXT,

@@ -1,6 +1,7 @@
 import type { Database } from 'better-sqlite3'
+import { createHash } from 'node:crypto'
 import { randomUUID } from 'node:crypto'
-import type { Ledger, Message, RunEvent, RunMode, SessionResume, SessionResumeRecord, SessionSummary } from '@agent-hub/core'
+import type { Ledger, Message, Part, RunEvent, RunMode, SessionResume, SessionResumeRecord, SessionSummary } from '@agent-hub/core'
 
 interface SessionRow {
   id: string
@@ -147,7 +148,7 @@ export class SessionStore {
     const tx = this.db.transaction((items: Message[]) => {
       for (const m of items) insert.run(sessionId, runId, m.role, JSON.stringify(m), Date.now(), child?.parentRunId ?? null, child?.agent ?? null)
     })
-    tx(messages)
+    tx(this.dehydrate(messages))
     this.touch(sessionId)
   }
 
@@ -213,6 +214,52 @@ export class SessionStore {
       }
     }
     return out
+  }
+
+  /** Guarda a imagem uma vez por conteudo e devolve o hash: a mensagem fica com a referencia, nao com o base64. */
+  putMedia(mediaType: string, base64: string): string {
+    const bytes = Buffer.from(base64, 'base64')
+    const hash = createHash('sha256').update(bytes).digest('hex')
+    this.db
+      .prepare('INSERT INTO media (hash, media_type, bytes, size, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(hash) DO NOTHING')
+      .run(hash, mediaType, bytes, bytes.length, Date.now())
+    return hash
+  }
+
+  media(hash: string): { mediaType: string; bytes: Buffer } | null {
+    const row = this.db.prepare('SELECT media_type, bytes FROM media WHERE hash = ?').get(hash) as { media_type: string; bytes: Buffer } | undefined
+    return row ? { mediaType: row.media_type, bytes: row.bytes } : null
+  }
+
+  /** Tira o base64 das mensagens antes de gravar, deixando so a referencia. */
+  private dehydrate(messages: Message[]): Message[] {
+    return messages.map((m) => {
+      if (!m.parts.some((p) => p.type === 'image' && p.data)) return m
+      return {
+        ...m,
+        parts: m.parts.map((p) => {
+          if (p.type !== 'image' || !p.data) return p
+          const ref = this.putMedia(p.mediaType, p.data)
+          const trocada: Part = { type: 'image', mediaType: p.mediaType, ref, name: p.name }
+          return trocada
+        }),
+      }
+    })
+  }
+
+  /** Devolve o base64 das imagens referenciadas, para a mensagem poder ir ao provedor. */
+  hydrate(messages: Message[]): Message[] {
+    return messages.map((m) => {
+      if (!m.parts.some((p) => p.type === 'image' && !p.data && p.ref)) return m
+      return {
+        ...m,
+        parts: m.parts.map((p) => {
+          if (p.type !== 'image' || p.data || !p.ref) return p
+          const guardada = this.media(p.ref)
+          return guardada ? { ...p, data: guardada.bytes.toString('base64') } : p
+        }),
+      }
+    })
   }
   /** Guarda o ponto de retomada da sessao, um por sessao, sempre o mais recente. */
   saveResume(sessionId: string, runId: string | null, resume: SessionResume, text: string): SessionResumeRecord {

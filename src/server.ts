@@ -47,6 +47,14 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
   })
 
 
+  app.get('/media/:hash', async (req, reply) => {
+    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'so a propria maquina le a midia' })
+    const { hash } = req.params as { hash: string }
+    if (!/^[0-9a-f]{64}$/.test(hash)) return reply.code(400).send({ error: 'hash invalido' })
+    const guardada = runtime.store.media(hash)
+    if (!guardada) return reply.code(404).send({ error: 'midia nao encontrada' })
+    return reply.type(guardada.mediaType).header('cache-control', 'private, max-age=31536000, immutable').send(guardada.bytes)
+  })
   app.get('/oauth/start', async (req, reply) => {
     if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'so a propria maquina inicia autorizacao' })
     const server = (req.query as { server?: string }).server

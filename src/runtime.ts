@@ -716,7 +716,7 @@ export class Runtime {
     if (req.budgetOverride?.runUsd !== undefined) budget.override('run', req.budgetOverride.runUsd)
     if (req.budgetOverride?.sessionUsd !== undefined) budget.override('session', req.budgetOverride.sessionUsd)
     this.activeBudgets.set(runId, budget)
-    const history = this.store.history(req.sessionId)
+    const history = this.store.hydrate(this.store.history(req.sessionId))
     const indice = this.knowledge.index(workspace)
     if (indice.files > 0) req.emit({ type: 'knowledge_indexed', files: indice.files, chunks: indice.chunks, ignored: indice.ignored })
     const contexto = loadWorkspaceContext(workspace, { text: req.text, windowTokens: profile.context.window })
