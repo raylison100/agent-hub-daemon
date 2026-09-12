@@ -18,6 +18,7 @@ import {
   approxTokens,
   budgetFor,
   classifierPrompt,
+  applyRole,
   createAdapter,
   defaultPolicy,
   gitPluginDir,
@@ -34,7 +35,9 @@ import {
   route,
   scoreAgents,
   type AgentProfile,
+  type AgentRole,
   type AgentSummary,
+  type RoleSummary,
   type AgentsRepo,
   type BackgroundTask,
   type Budget,
@@ -94,6 +97,7 @@ export interface RunRequest {
   onApprovalPush?: boolean
   reasoningOverride?: 'low' | 'medium' | 'high' | 'max'
   agentOverride?: string
+  roleOverride?: string
   improve?: boolean
   images?: ImageInput[]
 }
@@ -215,6 +219,26 @@ export class Runtime {
     }))
   }
 
+  /** Papeis carregados de agents/roles, com os modelos que podem executar cada um. */
+  roles(): RoleSummary[] {
+    return [...this.repo.roles.values()].map((r) => ({
+      name: r.name,
+      description: r.description,
+      models: r.models,
+      tools: r.tools ? [...r.tools.native, ...r.tools.mcp.map((s) => `mcp:${s}`)] : [],
+      policy: r.policy ?? null,
+    }))
+  }
+
+  /** Perfil pronto para o run: quando ha papel, o papel manda no prompt, nas ferramentas e na politica. */
+  profileWithRole(agent: string, role: string | null | undefined): AgentProfile {
+    const profile = this.profile(agent)
+    if (!role) return profile
+    const found = this.repo.roles.get(role)
+    if (!found) throw new Error(`papel desconhecido: ${role}`)
+    return applyRole(profile, found)
+  }
+
   /** Gasto de hoje e do mes, por agente e global, para o painel de limites da interface. */
   costStatus(): { todayUsd: number; monthUsd: number; globalMonthLimit: number | null; agents: Record<string, { todayUsd: number; dayLimit: number | null }> } {
     const day = new Date()
@@ -301,6 +325,12 @@ export class Runtime {
     return p
   }
 
+  role(name: string): AgentRole {
+    const r = this.repo.roles.get(name)
+    if (!r) throw new Error(`papel desconhecido: ${name}`)
+    return r
+  }
+
   /** Politica do perfil. Execucao `allow` sem sandbox por container cai para `ask`, como manda o documento 06. */
   policyFor(profile: AgentProfile): Policy {
     const policy = this.repo.policies.get(profile.policy) ?? defaultPolicy
@@ -308,29 +338,31 @@ export class Runtime {
     return policy
   }
 
-  /** Escolhe o agente: explicito vence; depois regras por palavra chave; classificador por modelo; pontuacao custo x capacidade; por fim o `default_agent`. `auto` significa decidir a cada mensagem. */
+  /** Escolhe o agente: explicito vence; depois regras por palavra chave; classificador por modelo; pontuacao custo x capacidade; por fim o `default_agent`. `auto` significa decidir a cada mensagem. Com papel, so os modelos do papel entram. */
   async resolveAgent(
     explicit: string | undefined,
     text: string,
     workspace: string,
     needsVision = false,
     sessionId?: string,
+    models?: string[],
   ): Promise<ResolvedAgent> {
     if (explicit && explicit !== autoAgent) return { agent: this.profile(explicit).name, routed: null, by: 'fixed' }
     const ctx = { text, workspace }
     const delega = needsDelegation(text)
     const contexto = this.contextTokens(sessionId, text)
-    let routed = needsVision ? null : this.ruleThatDelegates(route(this.repo.routing, ctx), delega)
+    let routed = needsVision ? null : this.ruleForRun(route(this.repo.routing, ctx), delega, models)
     if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'rule' }
     let intent = classifyIntent(text, this.repo.routing.intents)
     if (intent === null && this.repo.routing.classifier && text.trim()) {
       intent = await this.classify(text)
-      if (intent && !needsVision) routed = this.ruleThatDelegates(route(this.repo.routing, ctx, intent), delega)
+      if (intent && !needsVision) routed = this.ruleForRun(route(this.repo.routing, ctx, intent), delega, models)
       if (routed) return { agent: this.profile(routed.agent).name, routed, by: 'classifier' }
     }
-    const scored = this.scoreFor(intent, text, undefined, needsVision, delega, contexto)
+    const scored = this.scoreFor(intent, text, undefined, needsVision, delega, contexto, models)
     if (scored.chosen) return { agent: this.profile(scored.chosen.agent).name, routed: null, by: 'score', intent, ranking: scored.ranking }
-    if (this.repo.routing.default_agent) return { agent: this.profile(this.repo.routing.default_agent).name, routed: null, by: 'default', intent, ranking: scored.ranking }
+    const padrao = models?.[0] ?? this.repo.routing.default_agent
+    if (padrao) return { agent: this.profile(padrao).name, routed: null, by: 'default', intent, ranking: scored.ranking }
     throw new Error('nenhuma regra casou, nenhum agente pontuou e nao ha default_agent em routing.json')
   }
 
@@ -341,10 +373,12 @@ export class Runtime {
     return pedido + approxMessageTokens(this.store.history(sessionId))
   }
 
-  /** Regra so vale se o agente dela der conta do pedido; pedido de subagente vai para quem delega. */
-  private ruleThatDelegates(routed: RouteResult | null, delega: boolean): RouteResult | null {
-    if (!routed || !delega) return routed
-    return this.repo.profiles.get(routed.agent)?.delegates.length ? routed : null
+  /** Regra so vale se o agente dela der conta do pedido: precisa delegar quando o pedido pede subagente e estar entre os modelos do papel. */
+  private ruleForRun(routed: RouteResult | null, delega: boolean, models?: string[]): RouteResult | null {
+    if (!routed) return null
+    if (models && !models.includes(routed.agent)) return null
+    if (delega && !this.repo.profiles.get(routed.agent)?.delegates.length) return null
+    return routed
   }
 
   /** Aviso quando a tabela de precos esta velha; precos de provedor mudam e a tabela e atualizada a mao. */
@@ -363,10 +397,12 @@ export class Runtime {
     needsVision = false,
     needsDelegates = false,
     contextTokens?: number,
+    models?: string[],
   ): { chosen: ScoredAgent | null; ranking: ScoredAgent[] } {
     const scoring = this.repo.routing.scoring
     if (!scoring) return { chosen: null, ranking: [] }
-    const candidates: ScoreCandidate[] = [...this.repo.profiles.values()].map((p) => ({
+    const perfis = [...this.repo.profiles.values()].filter((p) => !models || models.includes(p.name))
+    const candidates: ScoreCandidate[] = perfis.map((p) => ({
       name: p.name,
       provider: p.provider,
       model: p.model,
@@ -585,13 +621,15 @@ export class Runtime {
     const session = this.store.get(req.sessionId)
     if (!session) throw new Error(`sessao nao encontrada: ${req.sessionId}`)
     const runId = req.runId ?? randomUUID()
+    const papel = req.roleOverride ?? session.role
+    const candidatos = papel ? this.role(papel).models : undefined
     const chosen = req.agentOverride
       ? { agent: this.profile(req.agentOverride).name, routed: null, by: 'override' as const }
-      : await this.resolveAgent(session.agent, req.text, session.workspace, (req.images?.length ?? 0) > 0, req.sessionId)
-    const base = this.profile(chosen.agent)
+      : await this.resolveAgent(session.agent, req.text, session.workspace, (req.images?.length ?? 0) > 0, req.sessionId, candidatos)
+    const base = this.profileWithRole(chosen.agent, papel)
     this.db
-      .prepare('INSERT OR REPLACE INTO runs (run_id, session_id, agent, intent, routed_by, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(runId, req.sessionId, base.name, chosen.routed?.intent ?? chosen.intent ?? null, chosen.by, Date.now())
+      .prepare('INSERT OR REPLACE INTO runs (run_id, session_id, agent, role, intent, routed_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(runId, req.sessionId, base.name, papel ?? null, chosen.routed?.intent ?? chosen.intent ?? null, chosen.by, Date.now())
     if (session.agent === autoAgent || chosen.by === 'override') {
       req.emit({
         type: 'routed',

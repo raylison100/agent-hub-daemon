@@ -11,6 +11,7 @@ interface SessionRow {
   pinned: number
   archived: number
   group_name: string | null
+  role: string | null
   mode: string
   created_at: number
   updated_at: number
@@ -64,7 +65,8 @@ export class SessionStore {
   }
 
   /** Renomeia, fixa ou arquiva sem mexer em `updated_at`, para nao reordenar a lista. */
-  update(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; agent?: string; mode?: RunMode; group?: string | null }): SessionSummary | undefined {
+  update(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; agent?: string; role?: string | null; mode?: RunMode; group?: string | null }): SessionSummary | undefined {
+    if (patch.role !== undefined) this.db.prepare('UPDATE sessions SET role = ? WHERE id = ?').run(patch.role, id)
     if (patch.mode !== undefined) this.db.prepare('UPDATE sessions SET mode = ? WHERE id = ?').run(patch.mode, id)
     if (patch.group !== undefined) this.db.prepare('UPDATE sessions SET group_name = ? WHERE id = ?').run(patch.group, id)
     if (patch.title !== undefined) this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(patch.title.trim().slice(0, 120) || 'Sem titulo', id)
@@ -198,6 +200,7 @@ export class SessionStore {
       origin: row.origin,
       pinned: row.pinned === 1,
       group: row.group_name,
+      role: row.role,
       mode: (row.mode ?? 'normal') as RunMode,
       archived: row.archived === 1,
       createdAt: row.created_at,

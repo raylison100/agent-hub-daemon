@@ -77,14 +77,15 @@ export class ConnectionHub {
     }
     switch (frame.type) {
       case 'agents.list':
-        send({ type: 'agents.list', agents: runtime.agents(), errors: runtime.repo.errors })
+        send({ type: 'agents.list', agents: runtime.agents(), roles: runtime.roles(), errors: runtime.repo.errors })
         return
       case 'session.create': {
         const workspace = runtime.assertWorkspace(frame.workspace)
         const agent = frame.agent === undefined || frame.agent === autoAgent ? autoAgent : runtime.profile(frame.agent).name
         const session = runtime.store.create(agent, workspace, frame.title)
-        send({ type: 'session.created', session })
-        this.broadcast({ type: 'session.updated', session })
+        const comPapel = frame.role ? runtime.store.update(session.id, { role: runtime.role(frame.role).name }) : session
+        send({ type: 'session.created', session: comPapel ?? session })
+        this.broadcast({ type: 'session.updated', session: comPapel ?? session })
         return
       }
       case 'workspace.roots':
@@ -183,7 +184,8 @@ export class ConnectionHub {
         return
       case 'session.update': {
         const agent = frame.agent === undefined ? undefined : frame.agent === autoAgent ? autoAgent : runtime.profile(frame.agent).name
-        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived, agent, mode: frame.mode, group: frame.group })
+        const role = frame.role === undefined || frame.role === null ? frame.role : runtime.role(frame.role).name
+        const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived, agent, role, mode: frame.mode, group: frame.group })
         if (!session) throw new Error('sessao nao encontrada')
         if (frame.mode === 'auto_approve') {
           for (const id of runtime.flushApprovals(frame.session_id)) this.broadcast({ type: 'approval.resolved', approval_id: id, decision: 'allow' })
@@ -231,7 +233,7 @@ export class ConnectionHub {
         send({ type: 'sync', session_id: frame.session_id, events: runtime.store.eventsSince(frame.session_id, frame.since_seq) })
         return
       case 'run.start':
-        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve, frame.images)
+        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve, frame.images, frame.role)
         return
       case 'cost.status': {
         const s = runtime.costStatus()
@@ -499,6 +501,7 @@ export class ConnectionHub {
     agent?: string,
     improve?: boolean,
     images?: { media_type: string; data: string; name?: string }[],
+    role?: string,
   ): void {
     const runtime = this.runtime
     const runId = randomUUID()
@@ -518,6 +521,7 @@ export class ConnectionHub {
         autoApprove: mode === 'auto_approve',
         reasoningOverride: reasoning,
         agentOverride: agent && agent !== autoAgent ? agent : undefined,
+        roleOverride: role,
         improve,
         images: images?.map((i) => ({ mediaType: i.media_type, data: i.data, name: i.name })),
         emit: (event) => {

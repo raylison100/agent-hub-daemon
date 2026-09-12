@@ -198,10 +198,13 @@ program
 
 program
   .command('agents')
-  .description('Lista perfis carregados e erros de carregamento')
+  .description('Lista perfis e papeis carregados, com os erros de carregamento')
   .action(() => {
     const runtime = new Runtime(loadConfig())
     for (const a of runtime.agents()) console.log(`${a.name}\t${a.provider}/${a.model}\t${a.reasoning}\t${a.description}`)
+    const papeis = runtime.roles()
+    if (papeis.length > 0) console.log('\npapeis (papel roda em qualquer um dos modelos listados):')
+    for (const r of papeis) console.log(`${r.name}\tmodelos: ${r.models.join(', ')}\t${r.description}`)
     reportErrors(runtime)
   })
 
@@ -211,7 +214,8 @@ program
   .option('--at <iso>', 'simula outro instante para o preco por horario, ex.: 2026-09-14T02:30:00Z')
   .option('--imagem', 'simula um pedido com imagem anexada, que exige agente com visao')
   .option('--contexto <tokens>', 'simula o historico ja acumulado na sessao, em tokens')
-  .action((texto: string, opts: { at?: string; imagem?: boolean; contexto?: string }) => {
+  .option('--papel <nome>', 'restringe aos modelos declarados no papel, como a sessao faria')
+  .action((texto: string, opts: { at?: string; imagem?: boolean; contexto?: string; papel?: string }) => {
     const runtime = new Runtime(loadConfig())
     const at = opts.at ? new Date(opts.at) : undefined
     if (at && Number.isNaN(at.getTime())) throw new Error(`instante invalido: ${opts.at}`)
@@ -226,8 +230,10 @@ program
     const ruled = opts.imagem ? null : route(runtime.repo.routing, { text: texto, workspace: process.cwd() })
     console.log(`intencao por palavra chave: ${intent ?? 'nenhuma'}`)
     if (delega) console.log('pedido fala em subagente ou delegacao: so entram agentes que delegam')
+    const modelos = opts.papel ? runtime.role(opts.papel).models : undefined
+    if (modelos) console.log(`papel ${opts.papel}: so entram ${modelos.join(', ')}`)
     if (ruled) console.log(`regra: ${JSON.stringify(ruled.rule.when)} -> ${ruled.agent}`)
-    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true, delega, contexto)
+    const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true, delega, contexto, modelos)
     if (scored.ranking.length === 0) {
       console.log('pontuacao desligada: sem bloco scoring em routing.json')
       return
