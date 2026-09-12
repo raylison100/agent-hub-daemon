@@ -29,6 +29,8 @@ import {
   listContextFiles,
   loadMemories,
   loadWorkspaceContext,
+  KnowledgeStore,
+  knowledgeTool,
   memoryDir,
   messageText,
   parseResume,
@@ -185,6 +187,7 @@ export class Runtime {
   readonly push: PushService
   readonly secrets: SecretStore
   readonly terminals = new Terminals()
+  readonly knowledge: KnowledgeStore
   automation!: AutomationRunner
   repo!: AgentsRepo
   pricing!: Pricing
@@ -197,6 +200,9 @@ export class Runtime {
     this.ledger = new Ledger(db)
     this.store = new SessionStore(db, this.ledger)
     this.registry.registerAll(nativeTools())
+    KnowledgeStore.migrate(db)
+    this.knowledge = new KnowledgeStore(db)
+    this.registry.register(knowledgeTool(this.knowledge))
     this.otel = config.otelEndpoint
       ? new OtelExporter({ endpoint: config.otelEndpoint, headers: config.otelHeaders, serviceName: 'agent-hub-daemon', log: (m) => console.error(m) })
       : null
@@ -692,6 +698,8 @@ export class Runtime {
     if (req.budgetOverride?.sessionUsd !== undefined) budget.override('session', req.budgetOverride.sessionUsd)
     this.activeBudgets.set(runId, budget)
     const history = this.store.history(req.sessionId)
+    const indice = this.knowledge.index(workspace)
+    if (indice.files > 0) req.emit({ type: 'knowledge_indexed', files: indice.files, chunks: indice.chunks, ignored: indice.ignored })
     const contexto = loadWorkspaceContext(workspace, { text: req.text, windowTokens: profile.context.window })
     if (contexto.tokens > 0 || contexto.ignored.length > 0) {
       req.emit({

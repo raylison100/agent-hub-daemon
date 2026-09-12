@@ -374,6 +374,9 @@ function printEvent(e: RunEvent): void {
     case 'compaction':
       console.log(`\n[compactacao ${e.mode}] ${e.before} para ${e.after} tokens estimados`)
       return
+    case 'knowledge_indexed':
+      console.log(`\n[base de conhecimento] ${e.files} arquivos indexados em ${e.chunks} trechos${e.ignored.length ? `, ignorados: ${e.ignored.join(', ')}` : ''}`)
+      return
     case 'workspace_context':
       console.log(`\n[contexto do projeto] ${e.tokens} tokens: ${[...e.instructions, ...e.memories].join(', ') || 'nada'}`)
       return
