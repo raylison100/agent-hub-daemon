@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { protocolVersion, resolveInside, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
+import { isRepoRoot, protocolVersion, resolveInside, type ClientFrame, type RunMode, type ServerFrame } from '@agent-hub/core'
 import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
@@ -96,7 +96,7 @@ export class ConnectionHub {
           .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
           .map((e) => e.name)
           .sort((a, b) => a.localeCompare(b))
-        send({ type: 'workspace.list', path: target, dirs })
+        send({ type: 'workspace.list', path: target, dirs, repo: isRepoRoot(target), repos: dirs.filter((d) => isRepoRoot(join(target, d))) })
         return
       }
       case 'workspace.find': {
