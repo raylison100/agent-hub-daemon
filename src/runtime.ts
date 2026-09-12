@@ -21,6 +21,7 @@ import {
   createAdapter,
   defaultPolicy,
   gitPluginDir,
+  improverAgent,
   improverPrompt,
   isDestructive,
   loadAgentsRepo,
@@ -43,6 +44,7 @@ import {
   type ImageInput,
   type Message,
   type Policy,
+  type PromptImprover,
   type RoutedBy,
   type RouteResult,
   type RunEvent,
@@ -455,7 +457,7 @@ export class Runtime {
   private async improvePrompt(sessionId: string, runId: string, text: string, target: AgentProfile): Promise<{ improved: string; by: string; costUsd: number } | null> {
     const cfg = this.repo.routing.prompt_improver
     if (!cfg || text.trim().length < cfg.min_chars || text.trimStart().startsWith('/')) return null
-    const improver = this.repo.profiles.get(cfg.agent)
+    const improver = this.improverFor(cfg, text)
     if (!improver || improver.name === target.name) return null
     const adapter = createAdapter(improver)
     const result = await adapter.chat({
@@ -487,6 +489,11 @@ export class Runtime {
     const improved = messageText(result.message).trim()
     if (!improved || improved.length < 8) return null
     return { improved, by: improver.name, costUsd }
+  }
+
+  /** Improver do pedido: o local para pedido curto, o remoto para pedido grande, conforme o prompt_improver. */
+  private improverFor(cfg: PromptImprover, text: string): AgentProfile | undefined {
+    return this.repo.profiles.get(improverAgent(cfg, text)) ?? this.repo.profiles.get(cfg.agent)
   }
 
   /** Classificador de intencao por modelo barato, com custo lancado no ledger sob a sessao `roteamento`. */
