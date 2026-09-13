@@ -39,6 +39,8 @@ import {
   renderResume,
   resumeJsonSchema,
   resumePrompt,
+  verifyRun,
+  type Cascade,
   resumeSystem,
   resumeTranscript,
   nativeTools,
@@ -118,6 +120,12 @@ export interface RunRequest {
   roleOverride?: string
   improve?: boolean
   images?: ImageInput[]
+}
+
+type RunFinished = Extract<RunEvent, { type: 'run_finished' }>
+
+interface AttemptResult extends RunResult {
+  finished?: RunFinished
 }
 
 export const autoAgent = 'auto'
@@ -728,14 +736,77 @@ export class Runtime {
       }
     }
     const profile = req.reasoningOverride ? { ...base, reasoning: req.reasoningOverride } : base
-    const result = await this.runWith(profile, session.workspace, req, runId)
-    if (result.stop !== 'tool_call_invalid' || !profile.fallback_agent) return result
+    const cascata = this.cascadeFor(req, session.agent, chosen, papel)
+    if (cascata) return this.runCascade(cascata.cascade, cascata.local, profile, session.workspace, req, runId)
+    if (!profile.fallback_agent) return this.runWith(profile, session.workspace, req, runId)
+    const result = await this.runWith(profile, session.workspace, req, runId, { attempt: true })
+    if (result.stop !== 'tool_call_invalid') {
+      this.keepAttempt(req, runId, result, profile.name, true)
+      return result
+    }
+    this.keepAttempt(req, runId, result, profile.name, false)
     const fallback = this.profile(profile.fallback_agent)
     req.emit({ type: 'escalation', from: profile.name, to: fallback.name, reason: 'chamadas de ferramenta invalidas apos reparo' })
-    return this.runWith(fallback, session.workspace, req, randomUUID(), runId)
+    this.markRunAgent(runId, fallback.name)
+    return this.runWith(fallback, session.workspace, req, runId, { extraCostUsd: result.costUsd })
   }
 
-  private async runWith(profile: AgentProfile, workspace: string, req: RunRequest, runId: string, parentRunId?: string): Promise<RunResult> {
+  /** Cascata do routing.json: vale com agente automatico, sem papel nem imagem, intencao listada e pedido que cabe no modelo local. */
+  private cascadeFor(req: RunRequest, sessionAgent: string, chosen: ResolvedAgent, papel: string | null | undefined): { cascade: Cascade; local: AgentProfile } | null {
+    const cascade = this.repo.routing.cascade
+    if (!cascade || sessionAgent !== autoAgent || req.agentOverride || papel || (req.images?.length ?? 0) > 0) return null
+    const intent = chosen.routed?.intent ?? chosen.intent ?? null
+    if (!intent || !cascade.intents.includes(intent)) return null
+    const local = this.repo.profiles.get(cascade.agent)
+    if (!local) return null
+    const limite = cascade.max_prompt_tokens ?? local.routing.max_prompt_tokens ?? Math.floor(local.context.window / 2)
+    if (this.contextTokens(req.sessionId, req.text) > limite) return null
+    return { cascade, local }
+  }
+
+  /** Roda o modelo local, confere o resultado por codigo e so chama o agente escolhido pelo roteador quando a verificacao falha. */
+  private async runCascade(cascade: Cascade, local: AgentProfile, destino: AgentProfile, workspace: string, req: RunRequest, runId: string): Promise<RunResult> {
+    const escalada = destino.name !== local.name ? destino : cascade.escalate_to ? this.profile(cascade.escalate_to) : null
+    req.emit({
+      type: 'routed',
+      agent: local.name,
+      model: `${local.provider}/${local.model}`,
+      by: 'cascade',
+      intent: null,
+      reason: escalada ? `${local.name} tenta primeiro; ${escalada.name} se a verificacao falhar` : `${local.name} sem agente para escalar`,
+    })
+    const tentativa = await this.runWith(local, workspace, req, runId, { attempt: true })
+    const verificacao = verifyRun({ stop: tentativa.stop, appended: tentativa.appended, workspace }, cascade.checks)
+    req.emit({ type: 'verification', agent: local.name, ok: verificacao.ok, failures: verificacao.failures, citations: verificacao.citations })
+    if (verificacao.ok || !escalada) {
+      this.markRunAgent(runId, local.name)
+      this.keepAttempt(req, runId, tentativa, local.name, true)
+      return tentativa
+    }
+    this.keepAttempt(req, runId, tentativa, local.name, false)
+    req.emit({ type: 'escalation', from: local.name, to: escalada.name, reason: verificacao.failures.map((f) => f.reason).join('; ') })
+    this.markRunAgent(runId, escalada.name)
+    return this.runWith(escalada, workspace, req, runId, { extraCostUsd: tentativa.costUsd })
+  }
+
+  /** Grava uma tentativa: no historico principal quando foi aceita, como mensagens filhas do run quando foi descartada. */
+  private keepAttempt(req: RunRequest, runId: string, attempt: AttemptResult, agent: string, accepted: boolean): void {
+    if (!accepted) {
+      this.store.appendMessages(req.sessionId, randomUUID(), attempt.appended, { parentRunId: runId, agent })
+      return
+    }
+    const primeira = this.store.history(req.sessionId).length === 0
+    this.store.appendMessages(req.sessionId, runId, attempt.appended)
+    if (primeira) this.store.touch(req.sessionId, titleFrom(req.text))
+    if (attempt.finished) req.emit(attempt.finished)
+  }
+
+  private markRunAgent(runId: string, agent: string): void {
+    this.db.prepare('UPDATE runs SET agent = ? WHERE run_id = ?').run(agent, runId)
+  }
+
+  private async runWith(profile: AgentProfile, workspace: string, req: RunRequest, runId: string, opts: { attempt?: boolean; extraCostUsd?: number } = {}): Promise<AttemptResult> {
+    let finished: RunFinished | undefined
     const conectoresFora = await this.ensureMcp(profile)
     if (conectoresFora.length > 0) req.emit({ type: 'mcp_skipped', servers: conectoresFora })
     const adapter = createAdapter(profile)
@@ -769,13 +840,18 @@ export class Runtime {
       budget,
       workspace,
       approve: (call, def) => this.ask(req, runId, call, def),
-      emit: (event) => this.observe(req, runId, event, profile, adapter.provider),
+      emit: (event) => {
+        if (event.type !== 'run_finished') return this.observe(req, runId, event, profile, adapter.provider)
+        const somado = { ...event, costUsd: event.costUsd + (opts.extraCostUsd ?? 0) }
+        if (opts.attempt) finished = somado
+        else this.observe(req, runId, somado, profile, adapter.provider)
+      },
       summarize: this.summarizerFor(profile, req.sessionId, runId),
       redact: (text) => this.redactor.redact(text),
       preloadSkills: activatedSkills(this.repo.skills, profile.skills, { text: req.text, workspace }, this.repo.routing.intents),
       workspaceContext: contexto.text || undefined,
       turnContext: contexto.memoryText || undefined,
-      toolSet: parentRunId ? undefined : { previous: this.store.toolSet(req.sessionId), save: (names) => this.store.setToolSet(req.sessionId, names) },
+      toolSet: { previous: this.store.toolSet(req.sessionId), save: (names) => this.store.setToolSet(req.sessionId, names) },
       delegate: (agent, task, opts) => this.delegate(req, workspace, runId, agent, task, undefined, opts),
       spawn: (agent, task, opts) => this.spawn(req, workspace, runId, agent, task, opts),
       collect: (taskId, wait) => this.collect(runId, taskId, wait),
@@ -785,7 +861,8 @@ export class Runtime {
       signal: req.signal,
     })
     try {
-      const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text, images: req.images, parentRunId })
+      const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text, images: req.images })
+      if (opts.attempt) return { ...result, finished }
       this.store.appendMessages(req.sessionId, runId, result.appended)
       if (history.length === 0) this.store.touch(req.sessionId, titleFrom(req.text))
       return result

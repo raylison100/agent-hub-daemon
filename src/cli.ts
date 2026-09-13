@@ -399,6 +399,9 @@ function printEvent(e: RunEvent): void {
     case 'escalation':
       console.log(`\n[escalada] ${e.from} para ${e.to}: ${e.reason}`)
       return
+    case 'verification':
+      console.log(`\n[verificacao de ${e.agent}] ${e.ok ? 'passou' : `falhou: ${e.failures.map((f) => f.reason).join('; ')}`}`)
+      return
     case 'max_output_retry':
       console.log(`\n[teto estourado no raciocinio] ${e.reasoningTokens} tokens de pensamento sem resposta; repetindo com teto ${e.maxOutput} e esforco ${e.reasoning}`)
       return
