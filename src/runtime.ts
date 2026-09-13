@@ -29,6 +29,7 @@ import {
   listContextFiles,
   loadMemories,
   loadWorkspaceContext,
+  deliveredMemories,
   KnowledgeStore,
   knowledgeTool,
   memoryDir,
@@ -743,12 +744,13 @@ export class Runtime {
     const history = this.store.hydrate(this.store.history(req.sessionId))
     const indice = this.knowledge.index(workspace)
     if (indice.files > 0) req.emit({ type: 'knowledge_indexed', files: indice.files, chunks: indice.chunks, ignored: indice.ignored })
-    const contexto = loadWorkspaceContext(workspace, { text: req.text, windowTokens: profile.context.window })
-    if (contexto.tokens > 0 || contexto.ignored.length > 0) {
+    const contexto = loadWorkspaceContext(workspace, { text: req.text, windowTokens: profile.context.window, delivered: deliveredMemories(history) })
+    if (contexto.tokens > 0 || contexto.ignored.length > 0 || contexto.inHistory.length > 0) {
       req.emit({
         type: 'workspace_context',
         instructions: contexto.instructions.map((i) => i.file),
         memories: contexto.memories.map((m) => m.name),
+        inHistory: contexto.inHistory,
         tokens: contexto.tokens,
         ignored: contexto.ignored,
       })
@@ -769,6 +771,8 @@ export class Runtime {
       redact: (text) => this.redactor.redact(text),
       preloadSkills: activatedSkills(this.repo.skills, profile.skills, { text: req.text, workspace }, this.repo.routing.intents),
       workspaceContext: contexto.text || undefined,
+      turnContext: contexto.memoryText || undefined,
+      toolSet: parentRunId ? undefined : { previous: this.store.toolSet(req.sessionId), save: (names) => this.store.setToolSet(req.sessionId, names) },
       delegate: (agent, task, opts) => this.delegate(req, workspace, runId, agent, task, undefined, opts),
       spawn: (agent, task, opts) => this.spawn(req, workspace, runId, agent, task, opts),
       collect: (taskId, wait) => this.collect(runId, taskId, wait),
@@ -914,7 +918,7 @@ export class Runtime {
   }
 
   /** Ponto de retomada da sessao, escrito pelo modelo barato do perfil. Roda depois do run, sem segurar a resposta, e falha em silencio. */
-  async makeResume(sessionId: string, runId: string | null): Promise<SessionResumeRecord | null> {
+  async makeResume(sessionId: string, runId: string | null, cancel?: AbortSignal): Promise<SessionResumeRecord | null> {
     const session = this.store.get(sessionId)
     if (!session) return null
     const history = this.store.history(sessionId)
@@ -925,6 +929,7 @@ export class Runtime {
     const prompt = resumePrompt(resumeTranscript(history))
     let ultimo = ''
     for (let tentativa = 0; tentativa < 2; tentativa++) {
+      if (cancel?.aborted) return null
       const texto = tentativa === 0 ? prompt : `${prompt}\n\nA resposta anterior nao era JSON valido: ${ultimo}. Responda so o JSON.`
       const result = await adapter.chat({
         system: resumeSystem,
@@ -934,7 +939,7 @@ export class Runtime {
         reasoning: 'low',
         systemCacheTtl: '5m',
         providerOptions: escritor.provider_options,
-        signal: AbortSignal.timeout(120_000),
+        signal: cancel ? AbortSignal.any([cancel, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
       })
       this.ledger.record({
         ts: Date.now(),

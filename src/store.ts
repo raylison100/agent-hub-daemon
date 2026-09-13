@@ -39,6 +39,22 @@ export class SessionStore {
     return this.get(id)!
   }
 
+  /** Ferramentas de MCP escolhidas para esta sessao na ultima vez que o catalogo nao coube na janela. */
+  toolSet(sessionId: string): string[] | undefined {
+    const row = this.db.prepare('SELECT tool_set FROM sessions WHERE id = ?').get(sessionId) as { tool_set: string | null } | undefined
+    if (!row?.tool_set) return undefined
+    try {
+      const nomes = JSON.parse(row.tool_set) as unknown
+      return Array.isArray(nomes) ? nomes.filter((n): n is string => typeof n === 'string') : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  setToolSet(sessionId: string, names: string[]): void {
+    this.db.prepare('UPDATE sessions SET tool_set = ? WHERE id = ?').run(JSON.stringify(names), sessionId)
+  }
+
   setting(key: string): string | undefined {
     const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
     return row?.value

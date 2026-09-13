@@ -406,7 +406,7 @@ function printEvent(e: RunEvent): void {
       console.log(`\n[compactacao ${e.mode}] ${e.before} para ${e.after} tokens estimados`)
       return
     case 'tools_selected':
-      console.log(`\n[ferramentas] ${e.kept} enviadas, ${e.dropped} fora, ${e.tokens} tokens de ${e.budget} de teto`)
+      console.log(`\n[ferramentas] ${e.kept} enviadas${e.reused ? ' (as mesmas da mensagem anterior)' : ''}, ${e.dropped} fora, ${e.tokens} tokens de ${e.budget} de teto`)
       return
     case 'mcp_skipped':
       console.log(`\n[conectores fora] ${e.servers.map((s) => `${s.name}: ${s.reason}`).join(' | ')}`)
@@ -415,7 +415,7 @@ function printEvent(e: RunEvent): void {
       console.log(`\n[base de conhecimento] ${e.files} arquivos indexados em ${e.chunks} trechos${e.ignored.length ? `, ignorados: ${e.ignored.join(', ')}` : ''}`)
       return
     case 'workspace_context':
-      console.log(`\n[contexto do projeto] ${e.tokens} tokens: ${[...e.instructions, ...e.memories].join(', ') || 'nada'}`)
+      console.log(`\n[contexto do projeto] ${e.tokens} tokens: ${[...e.instructions, ...e.memories].join(', ') || 'nada'}${e.inHistory.length ? `; ja na conversa: ${e.inHistory.join(', ')}` : ''}`)
       return
     case 'skills_loaded':
       console.log(`\n[skills] ${e.names.join(', ')}`)

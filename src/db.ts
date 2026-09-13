@@ -15,6 +15,7 @@ export function openDb(path: string): DatabaseType {
   addColumn(db, 'sessions', 'mode', "TEXT NOT NULL DEFAULT 'normal'")
   addColumn(db, 'sessions', 'group_name', 'TEXT')
   addColumn(db, 'sessions', 'role', 'TEXT')
+  addColumn(db, 'sessions', 'tool_set', 'TEXT')
   addColumn(db, 'runs', 'role', 'TEXT')
   addColumn(db, 'devices', 'created_at', 'INTEGER')
   addColumn(db, 'messages', 'parent_run_id', 'TEXT')

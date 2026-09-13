@@ -30,10 +30,13 @@ export interface Conn {
   client: string
 }
 
+const esperaDaRetomadaMs = Number(process.env.AGENT_HUB_RESUME_DELAY_MS ?? 90_000)
+
 /** Trata os quadros do protocolo para qualquer conexao, seja socket local ou canal vindo do relay. */
 export class ConnectionHub {
   private readonly conns = new Set<Conn>()
   private readonly runs = new Map<string, AbortController>()
+  private readonly retomadas = new Map<string, { timer: NodeJS.Timeout; controller: AbortController }>()
   private readonly mcpErrors = new Map<string, string>()
   scheduler!: Scheduler
   triggers!: Triggers
@@ -704,13 +707,33 @@ export class ConnectionHub {
     }
     return itens
   }
+  /** Agenda o ponto de retomada para quando a sessao ficar parada. */
+  private agendarRetomada(sessionId: string, runId: string): void {
+    this.cancelarRetomada(sessionId)
+    const controller = new AbortController()
+    const timer = setTimeout(() => void this.gerarRetomada(sessionId, runId, controller), esperaDaRetomadaMs)
+    timer.unref()
+    this.retomadas.set(sessionId, { timer, controller })
+  }
+
+  /** Cancela o resumo agendado ou em andamento da sessao. */
+  private cancelarRetomada(sessionId: string): void {
+    const pendente = this.retomadas.get(sessionId)
+    if (!pendente) return
+    clearTimeout(pendente.timer)
+    pendente.controller.abort()
+    this.retomadas.delete(sessionId)
+  }
+
   /** Escreve o ponto de retomada em segundo plano e avisa os clientes. Falha aqui nao atrapalha o run que ja terminou. */
-  private async gerarRetomada(sessionId: string, runId: string): Promise<void> {
+  private async gerarRetomada(sessionId: string, runId: string, controller: AbortController): Promise<void> {
     try {
-      const registro = await this.runtime.makeResume(sessionId, runId)
+      const registro = await this.runtime.makeResume(sessionId, runId, controller.signal)
       if (registro) this.broadcast({ type: 'session.resume', session_id: sessionId, resume: registro })
     } catch (err) {
-      console.error(`retomada da sessao ${sessionId}: ${describe(err)}`)
+      if (!controller.signal.aborted) console.error(`retomada da sessao ${sessionId}: ${describe(err)}`)
+    } finally {
+      if (this.retomadas.get(sessionId)?.controller === controller) this.retomadas.delete(sessionId)
     }
   }
 
@@ -729,6 +752,7 @@ export class ConnectionHub {
     const runId = randomUUID()
     const controller = new AbortController()
     this.runs.set(runId, controller)
+    this.cancelarRetomada(sessionId)
     send({ type: 'run.started', run_id: runId, session_id: sessionId })
     const withMode = runtime.store.update(sessionId, { mode })
     if (withMode) this.broadcast({ type: 'session.updated', session: withMode })
@@ -786,7 +810,7 @@ export class ConnectionHub {
         this.runs.delete(runId)
         const session = runtime.store.get(sessionId)
         if (session) this.broadcast({ type: 'session.updated', session })
-        void this.gerarRetomada(sessionId, runId)
+        this.agendarRetomada(sessionId, runId)
       })
   }
 }
