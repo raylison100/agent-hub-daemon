@@ -18,6 +18,7 @@ import {
   approxTokens,
   budgetFor,
   classifierPrompt,
+  classifierJsonSchema,
   applyRole,
   createAdapter,
   defaultPolicy,
@@ -36,6 +37,7 @@ import {
   messageText,
   parseResume,
   renderResume,
+  resumeJsonSchema,
   resumePrompt,
   resumeSystem,
   resumeTranscript,
@@ -597,10 +599,11 @@ export class Runtime {
       system: 'Voce classifica pedidos. Responda apenas com o nome da intencao.',
       messages: [{ role: 'user', parts: [{ type: 'text', text: classifierPrompt(this.repo.routing.intents, text, classifier.max_prompt_chars) }] }],
       tools: [],
-      maxOutput: 20,
+      maxOutput: 40,
       reasoning: 'low',
       systemCacheTtl: '5m',
       providerOptions: profile.provider_options,
+      responseFormat: { name: 'intencao', schema: classifierJsonSchema(this.repo.routing.intents) },
     })
     this.ledger.record({
       ts: Date.now(),
@@ -939,6 +942,7 @@ export class Runtime {
         reasoning: 'low',
         systemCacheTtl: '5m',
         providerOptions: escritor.provider_options,
+        responseFormat: { name: 'ponto_de_retomada', schema: resumeJsonSchema },
         signal: cancel ? AbortSignal.any([cancel, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
       })
       this.ledger.record({
