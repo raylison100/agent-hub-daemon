@@ -114,7 +114,7 @@ export interface RunRequest {
   onApproval: (info: PendingApproval) => void
   signal?: AbortSignal
   policyOverride?: Policy
-  budgetOverride?: { runUsd?: number; sessionUsd?: number }
+  budgetOverride?: { runUsd?: number; sessionUsd?: number; agentUsd?: number; globalUsd?: number }
   autoApprove?: boolean
   onApprovalPush?: boolean
   reasoningOverride?: 'low' | 'medium' | 'high' | 'max'
@@ -825,6 +825,8 @@ export class Runtime {
     const budget = budgetFor(this.ledger, profile, { runId, sessionId: req.sessionId }, agentDay, this.repo.budgets.global_month_usd)
     if (req.budgetOverride?.runUsd !== undefined) budget.override('run', req.budgetOverride.runUsd)
     if (req.budgetOverride?.sessionUsd !== undefined) budget.override('session', req.budgetOverride.sessionUsd)
+    if (req.budgetOverride?.agentUsd !== undefined) budget.override('agent', req.budgetOverride.agentUsd)
+    if (req.budgetOverride?.globalUsd !== undefined) budget.override('global', req.budgetOverride.globalUsd)
     this.activeBudgets.set(runId, budget)
     const history = this.store.hydrate(this.store.history(req.sessionId))
     const indice = this.knowledge.index(workspace)
