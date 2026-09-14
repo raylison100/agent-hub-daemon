@@ -868,7 +868,8 @@ export class Runtime {
       signal: req.signal,
     })
     try {
-      const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text, images: req.images })
+      const images = req.images?.map((i) => ({ ...i, ref: this.store.putMedia(i.mediaType, i.data) }))
+      const result = await runner.run({ runId, sessionId: req.sessionId, history, userText: req.text, images })
       if (opts.attempt) return { ...result, finished }
       this.store.appendMessages(req.sessionId, runId, result.appended)
       if (history.length === 0) this.store.touch(req.sessionId, titleFrom(req.text))
