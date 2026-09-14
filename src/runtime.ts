@@ -49,6 +49,7 @@ import {
   feedbackDelta,
   parseClassifierAnswer,
   route,
+  routeRole,
   scoreAgents,
   type AgentProfile,
   type AgentRole,
@@ -715,7 +716,9 @@ export class Runtime {
     const session = this.store.get(req.sessionId)
     if (!session) throw new Error(`sessao nao encontrada: ${req.sessionId}`)
     const runId = req.runId ?? randomUUID()
-    const papel = req.roleOverride ?? session.role
+    const regraDePapel = !req.roleOverride && !session.role ? routeRole(this.repo.routing, { text: req.text, workspace: session.workspace }) : null
+    const papelPorRegra = regraDePapel && this.repo.roles.has(regraDePapel.role) ? regraDePapel : null
+    const papel = req.roleOverride ?? session.role ?? papelPorRegra?.role
     const candidatos = papel ? this.role(papel).models : undefined
     const chosen = req.agentOverride
       ? { agent: this.profile(req.agentOverride).name, routed: null, by: 'override' as const }
@@ -724,7 +727,7 @@ export class Runtime {
     this.db
       .prepare('INSERT OR REPLACE INTO runs (run_id, session_id, agent, role, intent, routed_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(runId, req.sessionId, base.name, papel ?? null, chosen.routed?.intent ?? chosen.intent ?? null, chosen.by, Date.now())
-    if (session.agent === autoAgent || chosen.by === 'override') {
+    if (session.agent === autoAgent || chosen.by === 'override' || papelPorRegra) {
       req.emit({
         type: 'routed',
         agent: base.name,
@@ -733,9 +736,10 @@ export class Runtime {
         intent: chosen.routed?.intent ?? chosen.intent ?? null,
         reason: routedReason(chosen),
         ranking: chosen.ranking,
+        role: papelPorRegra?.role,
       })
     }
-    if (req.improve) {
+    if (req.improve && papelPorRegra?.improve !== false) {
       const improved = await this.improvePrompt(req.sessionId, runId, req.text, base).catch(() => null)
       if (improved) {
         req.emit({ type: 'prompt_improved', by: improved.by, original: req.text, improved: improved.improved, costUsd: improved.costUsd })

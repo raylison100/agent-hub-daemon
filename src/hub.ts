@@ -39,6 +39,7 @@ const esperaDaRetomadaMs = Number(process.env.AGENT_HUB_RESUME_DELAY_MS ?? 90_00
 export class ConnectionHub {
   private readonly conns = new Set<Conn>()
   private readonly runs = new Map<string, AbortController>()
+  private readonly sessaoDoRun = new Map<string, string>()
   private readonly retomadas = new Map<string, { timer: NodeJS.Timeout; controller: AbortController }>()
   private readonly mcpErrors = new Map<string, string>()
   scheduler!: Scheduler
@@ -376,14 +377,13 @@ export class ConnectionHub {
         return
       }
       case 'session.delete_many': {
+        for (const id of frame.session_ids) this.cancelarRunsDaSessao(id)
         const apagadas = runtime.store.deleteMany(frame.session_ids)
         this.broadcast({ type: 'session.deleted_many', session_ids: apagadas })
         return
       }
       case 'session.delete': {
-        if (this.runs.size > 0) {
-          for (const [, c] of this.runs) c.signal.aborted
-        }
+        this.cancelarRunsDaSessao(frame.session_id)
         if (!runtime.store.delete(frame.session_id)) throw new Error('sessao nao encontrada')
         this.broadcast({ type: 'session.deleted', session_id: frame.session_id })
         return
@@ -693,6 +693,14 @@ export class ConnectionHub {
    * Reinicio de verdade. Sob systemd basta sair, que o Restart=always sobe outro; sem supervisao, larga um
    * processo novo com os mesmos argumentos antes de sair, para nao deixar voce sem daemon nenhum.
    */
+  /** Interrompe os runs em andamento de uma sessao que vai ser apagada, para nao continuarem gastando sem ninguem ver. */
+  private cancelarRunsDaSessao(sessionId: string): void {
+    for (const [runId, dono] of this.sessaoDoRun) {
+      if (dono === sessionId) this.runs.get(runId)?.abort()
+    }
+    this.cancelarRetomada(sessionId)
+  }
+
   private listaDePlugins(): ServerFrame {
     const { runtime } = this
     return { type: 'plugins.list', plugins: resumirPlugins(runtime.config.agentsDir, runtime.repo.plugins, new Map([...runtime.repo.roles].map(([nome, papel]) => [nome, papel.skills ?? []]))) }
@@ -766,7 +774,7 @@ export class ConnectionHub {
       itens.push({
         level: 'erro',
         title: `${falhas.length} run(s) terminaram mal nas ultimas 24h`,
-        detail: falhas.map((f) => `${f.stop}${f.error ? `: ${f.error.slice(0, 60)}` : ''}`).join(' | '),
+        detail: resumoDeFalhas(falhas),
         action: 'Veja o motivo na conversa antes de repetir o pedido',
         route: falhas[0] ? `/session/${falhas[0].sessionId}` : undefined,
       })
@@ -854,6 +862,7 @@ export class ConnectionHub {
     const runId = randomUUID()
     const controller = new AbortController()
     this.runs.set(runId, controller)
+    this.sessaoDoRun.set(runId, sessionId)
     this.cancelarRetomada(sessionId)
     send({ type: 'run.started', run_id: runId, session_id: sessionId })
     const withMode = runtime.store.update(sessionId, { mode })
@@ -910,6 +919,7 @@ export class ConnectionHub {
       .catch((err: unknown) => this.broadcast({ type: 'error', message: describe(err), ref: runId }))
       .finally(() => {
         this.runs.delete(runId)
+        this.sessaoDoRun.delete(runId)
         const session = runtime.store.get(sessionId)
         if (session) this.broadcast({ type: 'session.updated', session })
         this.agendarRetomada(sessionId, runId)
@@ -952,6 +962,26 @@ function describe(err: unknown): string {
 }
 
 /** O daemon esta sob um supervisor que o levanta de novo: systemd marca a variavel INVOCATION_ID no processo. */
+/** Mensagem legivel de um erro de run: tira o JSON do provedor e deixa codigo e texto. */
+export function motivoDoErro(stop: string, erro: string | null | undefined): string {
+  if (!erro) return stop
+  const codigo = /^(\d{3})\b/.exec(erro.trim())?.[1]
+  const mensagem = /"message"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(erro)?.[1]?.replace(/\\"/g, '"')
+  if (mensagem) return `${codigo ? `erro ${codigo} do provedor: ` : ''}${mensagem}`
+  const limpo = erro.replace(/\s+/g, ' ').trim()
+  return limpo.length > 140 ? `${limpo.slice(0, 140)}...` : limpo
+}
+
+/** Agrupa falhas iguais para o painel mostrar cada motivo uma vez, com a contagem. */
+export function resumoDeFalhas(falhas: { stop: string; error?: string | null }[]): string {
+  const contagem = new Map<string, number>()
+  for (const f of falhas) {
+    const motivo = motivoDoErro(f.stop, f.error)
+    contagem.set(motivo, (contagem.get(motivo) ?? 0) + 1)
+  }
+  return [...contagem].map(([motivo, n]) => (n > 1 ? `${n}x ${motivo}` : motivo)).join('; ')
+}
+
 function supervisionado(): boolean {
   return Boolean(process.env.INVOCATION_ID)
 }
