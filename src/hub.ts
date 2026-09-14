@@ -419,7 +419,7 @@ export class ConnectionHub {
         })
         return
       case 'run.start':
-        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve, frame.images, frame.role)
+        this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve, frame.images, frame.role, frame.run_usd)
         return
       case 'cost.status': {
         const s = runtime.costStatus()
@@ -862,6 +862,7 @@ export class ConnectionHub {
     improve?: boolean,
     images?: { media_type: string; data: string; name?: string }[],
     role?: string,
+    runUsd?: number,
   ): void {
     const runtime = this.runtime
     const runId = randomUUID()
@@ -884,6 +885,7 @@ export class ConnectionHub {
         reasoningOverride: reasoning,
         agentOverride: agent && agent !== autoAgent ? agent : undefined,
         roleOverride: role,
+        budgetOverride: runUsd !== undefined && runUsd > 0 ? { runUsd } : undefined,
         improve,
         images: images?.map((i) => ({ mediaType: i.media_type, data: i.data, name: i.name })),
         emit: (event) => {
