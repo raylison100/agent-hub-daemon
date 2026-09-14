@@ -33,6 +33,20 @@ export function tipoDeInstalacao(): 'pacote' | 'repositorio' {
   return existsSync(fileURLToPath(new URL('../.git', import.meta.url))) ? 'repositorio' : 'pacote'
 }
 
+/** Commits depois da tag da versao em cada repositorio vizinho do clone, para quem roda do codigo. */
+export function commitsNaoLancados(versao: string): { repositorio: string; commits: number }[] {
+  const raiz = fileURLToPath(new URL('../..', import.meta.url))
+  const out: { repositorio: string; commits: number }[] = []
+  for (const nome of ['core', 'daemon', 'web', 'agents', 'desktop']) {
+    const dir = join(raiz, nome)
+    if (!existsSync(join(dir, '.git'))) continue
+    const r = spawnSync('git', ['-C', dir, 'rev-list', '--count', `v${versao}..HEAD`], { encoding: 'utf8' })
+    const commits = Number(r.stdout.trim())
+    if (r.status === 0 && commits > 0) out.push({ repositorio: nome, commits })
+  }
+  return out
+}
+
 /** Compara duas versoes SemVer; versao com sufixo de pre-lancamento vale menos que a mesma sem sufixo. */
 export function compararVersoes(a: string, b: string): number {
   const partes = (v: string) => {
@@ -124,6 +138,7 @@ export class Atualizacao {
     const atual = versaoInstalada()
     const instalacao = tipoDeInstalacao()
     const supervisionado = this.opcoes.supervisionado()
+    const naoLancadas = instalacao === 'repositorio' ? commitsNaoLancados(atual) : []
     const disponivel = this.ultima !== null && compararVersoes(this.ultima.versao, atual) > 0
     const podeAtualizar = disponivel && instalacao === 'pacote' && supervisionado && !this.atualizando
     return {
@@ -133,18 +148,23 @@ export class Atualizacao {
       endereco_da_versao: this.ultima?.endereco ?? null,
       disponivel,
       instalacao,
+      nao_lancadas: naoLancadas,
       supervisionado,
       pode_atualizar: podeAtualizar,
       atualizando: this.atualizando,
-      detalhe: this.detalhe(atual, instalacao, supervisionado, disponivel),
+      detalhe: this.detalhe(atual, instalacao, supervisionado, disponivel, naoLancadas),
       consultado_em: this.consultadoEm,
     }
   }
 
-  private detalhe(atual: string, instalacao: 'pacote' | 'repositorio', supervisionado: boolean, disponivel: boolean): string {
+  private detalhe(atual: string, instalacao: 'pacote' | 'repositorio', supervisionado: boolean, disponivel: boolean, naoLancadas: { repositorio: string; commits: number }[]): string {
     if (this.atualizando) return `baixando a versao ${this.ultima?.versao}; o daemon reinicia sozinho e a interface reconecta. Registro em ${join(this.opcoes.home, 'atualizacao.log')}`
     if (this.erro && !this.ultima) return `nao foi possivel consultar a ultima versao: ${this.erro}`
     if (!this.ultima) return 'ainda nao consultado'
+    if (!disponivel && naoLancadas.length > 0) {
+      const lista = naoLancadas.map((n) => `${n.repositorio} ${n.commits}`).join(', ')
+      return `este daemon roda do codigo, a frente da versao ${atual} (commits ainda nao lancados: ${lista}). O app de desktop e o pacote so recebem essas mudancas quando sair a proxima versao: make versao`
+    }
     if (!disponivel) return `versao ${atual} e a mais recente`
     if (instalacao === 'repositorio') return `a versao ${this.ultima.versao} saiu; este daemon roda de um clone do repositorio, entao atualize com git pull e make build`
     if (!supervisionado) return `a versao ${this.ultima.versao} saiu; o daemon nao roda pelo servico do systemd, entao atualize no terminal com: agent-hub atualizar ${enderecoDoPacote(this.ultima.versao)}`
