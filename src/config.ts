@@ -141,6 +141,6 @@ export function exampleConfig(): string {
 
 /** Pasta do bundle da web servido pelo proprio daemon. Sem nada no config, usa o `web/dist` do repositorio ao lado do daemon. */
 function resolveWebDir(raw: string | undefined): string | undefined {
-  const candidates = raw ? [resolve(raw)] : [resolve(fileURLToPath(new URL('../../web/dist', import.meta.url)))]
+  const candidates = raw ? [resolve(raw)] : ['../web', '../../web/dist'].map((rel) => resolve(fileURLToPath(new URL(rel, import.meta.url))))
   return candidates.find((c) => existsSync(join(c, 'index.html')))
 }

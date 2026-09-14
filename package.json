@@ -6,7 +6,8 @@
   "author": "Raylison Nunes (https://github.com/raylison100)",
   "type": "module",
   "bin": {
-    "agent-hub-daemon": "./dist/cli.js"
+    "agent-hub": "./dist/bin.js",
+    "agent-hub-daemon": "./dist/bin.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

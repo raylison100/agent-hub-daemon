@@ -21,6 +21,15 @@ cifradas no SQLite. Tambem sao aceitas pelo ambiente ou por
 `~/.agent-hub/.env`; `agent-hub-daemon env` mostra quais foram encontradas sem
 revelar valores.
 
+## Pacote
+
+`make pacote`, na raiz, gera `dist-pacote/agent-hub-VERSAO.tgz` com `scripts/pacote.sh`:
+este daemon compilado, o `core` como dependencia empacotada, o `dist` da
+interface e o modelo de agentes. `make pacote-testar` instala num container
+limpo e confere tudo; `scripts/testar-pacote-servico.sh` confere o caminho do
+systemd com um `systemctl` falso. A entrada `dist/bin.js` confere os modulos
+nativos antes de carregar o resto, para o erro dizer o que instalar.
+
 ## Configuracao
 
 `~/.agent-hub/config.toml` (ou `$AGENT_HUB_HOME/config.toml`):
@@ -58,6 +67,9 @@ interface, instale o servico do systemd com `make servico` na raiz.
 
 | Comando | O que faz |
 |---|---|
+| `instalar` | prepara a maquina: config, agentes iniciais, servico do systemd e teste de saude |
+| `servico` | regrava o servico apontando para esta instalacao e reinicia |
+| `atualizar [pacote]` | instala a versao nova do pacote e regrava o servico |
 | `init` | cria `config.toml` e `.env` de modelo em `~/.agent-hub` |
 | `start` | sobe o servidor WebSocket e a interface |
 | `status` | confere se o daemon responde |

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander'
+import { spawnSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
@@ -7,7 +8,19 @@ import { approxTokens, classifyIntent, needsDelegation, route } from '@agent-hub
 import type { ReportGroup, RunEvent } from '@agent-hub/core'
 import type { PendingApproval } from './approvals.js'
 import { AutomationRunner } from './automation.js'
-import { ensureAccountToken, ensureDeviceId, ensureToken, envTemplate, exampleConfig, loadConfig } from './config.js'
+import { configHome, ensureAccountToken, ensureDeviceId, ensureToken, envTemplate, exampleConfig, loadConfig } from './config.js'
+import {
+  agentsTemplateDir,
+  checkNative,
+  currentCli,
+  ensureAgents,
+  ensureConfig,
+  installService,
+  serviceName,
+  serviceTarget,
+  waitHealth,
+  type StepResult,
+} from './install.js'
 import { serveMcp } from './mcp-server.js'
 import { Runtime } from './runtime.js'
 import { Scheduler } from './schedules.js'
@@ -33,6 +46,86 @@ program
       writeFileSync(envFile, envTemplate, { mode: 0o600 })
       console.log(`criado: ${envFile}. Preencha as chaves de API.`)
     }
+  })
+
+program
+  .command('instalar')
+  .description('Prepara esta maquina: config, agentes iniciais, servico do systemd e teste de saude')
+  .option('--sem-servico', 'nao instala o servico do systemd')
+  .option('--substituir-servico', 'troca um servico agent-hub que aponta para outra instalacao')
+  .action(async (opts: { semServico?: boolean; substituirServico?: boolean }) => {
+    const passo = (nome: string, r: StepResult) => console.log(`${r.ok ? 'ok   ' : 'falha'} ${nome}: ${r.detail}`)
+    const nativo = await checkNative()
+    passo('modulos nativos', nativo)
+    if (!nativo.ok) {
+      process.exitCode = 1
+      return
+    }
+    const home = configHome()
+    passo('configuracao', ensureConfig(home))
+    const config = loadConfig()
+    passo('agentes', ensureAgents(config.agentsDir, agentsTemplateDir()))
+    ensureToken(config.home)
+    const envFile = join(config.home, '.env')
+    if (!existsSync(envFile)) writeFileSync(envFile, envTemplate, { mode: 0o600 })
+    passo('interface', config.webDir ? { ok: true, detail: config.webDir } : { ok: false, detail: 'build da interface nao encontrado' })
+    if (opts.semServico) {
+      console.log('\nsem servico: rode "agent-hub start" para subir o daemon')
+      return
+    }
+    const alvo = serviceTarget()
+    if (alvo && alvo !== currentCli() && !opts.substituirServico) {
+      passo('servico', { ok: false, detail: `ja existe um ${serviceName} apontando para ${alvo}; use --substituir-servico para trocar` })
+      process.exitCode = 1
+      return
+    }
+    const servico = installService(config.home)
+    passo('servico', servico)
+    if (!servico.ok) {
+      process.exitCode = 1
+      return
+    }
+    const saude = await waitHealth(config.host, config.port)
+    passo('saude', saude)
+    if (!saude.ok) {
+      process.exitCode = 1
+      return
+    }
+    console.log(`\nAbra http://${config.host}:${config.port} e cadastre uma chave em Configuracoes, Chaves.`)
+    console.log(`Pastas liberadas para os agentes: ${config.workspaces.join(', ') || 'nenhuma'} (edite em ${join(config.home, 'config.toml')}).`)
+    console.log('Modelo local e opcional: com o Ollama em 127.0.0.1:11434, o agente qwen3 passa a funcionar.')
+  })
+
+program
+  .command('servico')
+  .description('Grava o servico do systemd apontando para esta instalacao e reinicia o daemon')
+  .action(async () => {
+    const config = loadConfig()
+    const r = installService(config.home)
+    console.log(`${r.ok ? 'ok' : 'falha'}: ${r.detail}`)
+    if (!r.ok) {
+      process.exitCode = 1
+      return
+    }
+    const saude = await waitHealth(config.host, config.port)
+    console.log(`${saude.ok ? 'ok' : 'falha'}: ${saude.detail}`)
+    if (!saude.ok) process.exitCode = 1
+  })
+
+program
+  .command('atualizar')
+  .description('Instala a versao nova do pacote e reinicia o servico com o Node atual')
+  .argument('[pacote]', 'arquivo .tgz ou URL da versao nova; sem ele, so reescreve o servico e reinicia')
+  .action((pacote: string | undefined) => {
+    if (pacote) {
+      const npm = spawnSync('npm', ['install', '-g', pacote], { stdio: 'inherit' })
+      if (npm.status !== 0) {
+        process.exitCode = npm.status ?? 1
+        return
+      }
+    }
+    const novo = spawnSync(process.execPath, [currentCli(), 'servico'], { stdio: 'inherit' })
+    process.exitCode = novo.status ?? 1
   })
 
 program
