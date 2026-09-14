@@ -1,7 +1,7 @@
 import type { Database } from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { randomUUID } from 'node:crypto'
-import type { Ledger, Message, Part, RunEvent, RunMode, SessionResume, SessionResumeRecord, SessionSummary } from '@agent-hub/core'
+import { withoutRepeatedToolMessages, type Ledger, type Message, type Part, type RunEvent, type RunMode, type SessionResume, type SessionResumeRecord, type SessionSummary } from '@agent-hub/core'
 
 interface SessionRow {
   id: string
@@ -128,6 +128,32 @@ export class SessionStore {
     const ponto = this.resume(id)
     if (ponto) this.saveResume(copy.id, null, ponto.resume, ponto.text)
     return this.get(copy.id)
+  }
+
+  /** Conversa inteira do nivel principal para a interface, sem as copias que a compactacao antiga regravava. */
+  conversation(sessionId: string): Message[] {
+    const rows = this.db
+      .prepare('SELECT run_id, content_json FROM messages WHERE session_id = ? AND parent_run_id IS NULL ORDER BY id')
+      .all(sessionId) as { run_id: string; content_json: string }[]
+    const todas = rows.map((r) => ({ ...(JSON.parse(r.content_json) as Message), runId: r.run_id }))
+    const porRun = new Map<string, Message[]>()
+    for (const m of todas) porRun.set(m.runId!, [...(porRun.get(m.runId!) ?? []), m])
+    const chave = (m: Message) => `${m.role}:${m.kind ?? ''}:${JSON.stringify(m.parts)}`
+    const vistas = new Set<string>()
+    const out: Message[] = []
+    for (const mensagens of porRun.values()) {
+      const pedidos = mensagens.filter((m) => m.role === 'user' && m.parts.some((p) => p.type === 'text')).length
+      let copiando = pedidos > 1
+      for (const m of mensagens) {
+        const k = chave(m)
+        const ehFerramenta = m.role === 'tool' || m.parts.some((p) => p.type === 'tool_call')
+        if (copiando && (ehFerramenta || vistas.has(k))) continue
+        copiando = false
+        vistas.add(k)
+        out.push(m)
+      }
+    }
+    return withoutRepeatedToolMessages(out)
   }
 
   /** Historico que vai ao modelo: so mensagens do nivel principal, a partir da ultima compactacao. */

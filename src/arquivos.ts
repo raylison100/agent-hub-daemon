@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { extname } from 'node:path'
 import { resolveInside } from '@agent-hub/core'
 import type { FastifyInstance } from 'fastify'
@@ -27,6 +27,21 @@ export const extensoesVisualizaveis = ['.html', '.htm', '.svg', '.png', '.jpg', 
 /** Tipo de conteudo de um arquivo que o painel pode mostrar, ou undefined quando a extensao nao e servida. */
 export function tipoDoArquivo(caminho: string): string | undefined {
   return tipos[extname(caminho).toLowerCase()]
+}
+
+const limiteDeLeitura = 20 * 1024 * 1024
+
+/** Le um arquivo visualizavel do workspace da sessao, para o painel receber pelo proprio canal do protocolo. */
+export function lerArquivoDaSessao(runtime: Runtime, sessionId: string, relativo: string): { mediaType: string; data: string; size: number } {
+  const sessao = runtime.store.get(sessionId)
+  if (!sessao) throw new Error('sessao nao encontrada')
+  const tipo = tipoDoArquivo(relativo)
+  if (!tipo || !extensoesVisualizaveis.includes(extname(relativo).toLowerCase())) throw new Error('tipo de arquivo nao visualizavel')
+  const arquivo = resolveInside(sessao.workspace, relativo)
+  if (!existsSync(arquivo) || !statSync(arquivo).isFile()) throw new Error(`arquivo nao encontrado: ${relativo}`)
+  const size = statSync(arquivo).size
+  if (size > limiteDeLeitura) throw new Error(`arquivo grande demais para o painel (${Math.round(size / 1024 / 1024)} MB); use Abrir fora`)
+  return { mediaType: tipo, data: readFileSync(arquivo).toString('base64'), size }
 }
 
 /** Serve arquivos do workspace de uma sessao para o painel de visualizacao, so para a propria maquina e com HTML isolado da origem do daemon. */

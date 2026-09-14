@@ -18,6 +18,7 @@ import {
   type RunMode,
   type ServerFrame,
 } from '@agent-hub/core'
+import { lerArquivoDaSessao } from './arquivos.js'
 import { Atualizacao, systemdRunDisponivel } from './atualizacao.js'
 import { adicionarPlugin, alternarPlugin, criarPapelDoPlugin, pluginsDoClaudeCode, removerPlugin, resumirPlugins } from './plugins-instalacao.js'
 import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
@@ -231,6 +232,11 @@ export class ConnectionHub {
       case 'health.list':
         send({ type: 'health.list', items: this.health() })
         return
+      case 'arquivo.ler': {
+        const lido = lerArquivoDaSessao(runtime, frame.session_id, frame.path)
+        send({ type: 'arquivo.conteudo', session_id: frame.session_id, path: frame.path, media_type: lido.mediaType, data: lido.data, size: lido.size })
+        return
+      }
       case 'versao.consultar':
         send({ type: 'versao.estado', estado: await this.atualizacao.estado(frame.forcar) })
         return
@@ -391,7 +397,7 @@ export class ConnectionHub {
         send({
           type: 'session.get',
           session,
-          messages: runtime.store.history(frame.session_id),
+          messages: runtime.store.conversation(frame.session_id),
           children: runtime.store.children(frame.session_id).map((c) => ({ run_id: c.runId, parent_run_id: c.parentRunId, agent: c.agent, messages: c.messages })),
           resume: runtime.store.resume(frame.session_id),
         })
