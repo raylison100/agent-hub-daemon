@@ -79,6 +79,7 @@ import {
 } from '@agent-hub/core'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import { AuthStore } from './auth.js'
+import { Anfitriao, Convidados } from './compartilhar.js'
 import { McpOAuth } from './mcp-oauth.js'
 import { ApprovalQueue, type ApprovalDecision, type PendingApproval } from './approvals.js'
 import type { AutomationRunner } from './automation.js'
@@ -203,6 +204,8 @@ export class Runtime {
   readonly knowledge: KnowledgeStore
   readonly oauth: McpOAuth
   readonly auth: AuthStore
+  readonly anfitriao: Anfitriao
+  readonly convidados: Convidados
   onMcpClose: ((name: string) => void) | null = null
   automation!: AutomationRunner
   repo!: AgentsRepo
@@ -227,6 +230,9 @@ export class Runtime {
     this.push = new PushService(config.home, db, (m) => console.error(m))
     this.secrets = new SecretStore(config.home, db)
     this.secrets.applyToEnv()
+    const log = (m: string) => console.error(m)
+    this.anfitriao = new Anfitriao({ db, secrets: this.secrets, relayUrl: config.relayUrl, nomeDispositivo: config.deviceName, ollamaBase: process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434/v1', log })
+    this.convidados = new Convidados({ db, secrets: this.secrets, porta: config.port, log })
     this.reload()
   }
 
@@ -234,6 +240,7 @@ export class Runtime {
   reload(): void {
     if (!existsSync(this.config.agentsDir)) throw new Error(`diretorio de agentes nao existe: ${this.config.agentsDir}`)
     this.repo = loadAgentsRepo(this.config.agentsDir)
+    for (const perfil of this.convidados.perfis()) this.repo.profiles.set(perfil.name, perfil)
     this.pricing = Pricing.fromFile(join(this.config.agentsDir, 'pricing.json'))
     this.redactor = new Redactor(this.repo.secrets)
     this.hooks.replace(this.repo.webhooks)

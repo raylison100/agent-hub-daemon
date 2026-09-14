@@ -3,6 +3,7 @@ import websocket from '@fastify/websocket'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { protocolVersion, type ClientFrame, type ServerFrame } from '@agent-hub/core'
 import { registerA2A } from './a2a.js'
+import { registrarRotasDeCompartilhamento } from './compartilhar.js'
 import { AutomationRunner } from './automation.js'
 import type { DaemonConfig } from './config.js'
 import { ConnectionHub, type Conn } from './hub.js'
@@ -104,6 +105,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
     })
   })
   registerA2A(app, runtime, hub, token)
+  registrarRotasDeCompartilhamento(app, runtime.convidados, isLoopback)
 
   await app.listen({ host: runtime.config.host, port: runtime.config.port })
   runtime.onMcpClose = (name) => {
@@ -132,6 +134,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
 
   const link = relayFor(runtime.config, relay, hub, triggers, log)
   link?.start()
+  runtime.anfitriao.iniciar()
 
   return {
     app,
@@ -140,6 +143,8 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
     triggers,
     async close() {
       link?.stop()
+      runtime.anfitriao.parar()
+      runtime.convidados.parar()
       clearInterval(mcpTimer)
       scheduler.stop()
       hub.abortAll()

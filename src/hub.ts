@@ -167,6 +167,38 @@ export class ConnectionHub {
         if (!runtime.auth.revogar(frame.device_id)) throw new Error('dispositivo nao encontrado')
         send({ type: 'auth.devices', devices: runtime.auth.dispositivos(), senha_definida: runtime.auth.temSenha() })
         return
+      case 'compartilhar.listar':
+        send(await this.listaDeCompartilhamento())
+        return
+      case 'compartilhar.criar': {
+        const criado = runtime.anfitriao.criar(frame.nome, frame.modelos, frame.limite_tokens_dia, frame.janela)
+        send({ type: 'compartilhar.criado', convite: criado.convite, convidado: criado.convidado })
+        return
+      }
+      case 'compartilhar.revogar':
+        runtime.anfitriao.revogar(frame.id)
+        send(await this.listaDeCompartilhamento())
+        return
+      case 'recebidos.listar':
+        send({ type: 'recebidos.lista', recebidos: runtime.convidados.listar() })
+        return
+      case 'recebidos.adicionar':
+        runtime.convidados.adicionar(frame.convite, frame.no_roteamento ?? true)
+        runtime.reload()
+        this.broadcast({ type: 'agents.list', agents: runtime.agents(), roles: runtime.roles(), errors: runtime.repo.errors })
+        send({ type: 'recebidos.lista', recebidos: runtime.convidados.listar() })
+        return
+      case 'recebidos.remover':
+        runtime.convidados.remover(frame.id)
+        runtime.reload()
+        this.broadcast({ type: 'agents.list', agents: runtime.agents(), roles: runtime.roles(), errors: runtime.repo.errors })
+        send({ type: 'recebidos.lista', recebidos: runtime.convidados.listar() })
+        return
+      case 'recebidos.testar': {
+        const teste = await runtime.convidados.testar(frame.id)
+        send({ type: 'recebidos.teste', id: frame.id, ...teste })
+        return
+      }
       case 'daemon.reload': {
         runtime.reload()
         send({ type: 'daemon.status', supervisionado: supervisionado(), reiniciando: false, detalhe: 'configuracao recarregada: perfis, papeis, skills, precos, conectores e agendamentos' })
@@ -707,6 +739,11 @@ export class ConnectionHub {
     }
     return itens
   }
+  /** Estado do compartilhamento desta maquina: se ha relay, os modelos do Ollama e os convites emitidos. */
+  private async listaDeCompartilhamento(): Promise<ServerFrame> {
+    return { type: 'compartilhar.lista', relay_configurado: this.runtime.anfitriao.relayConfigurado, modelos_locais: await this.runtime.anfitriao.modelosLocais(), convidados: this.runtime.anfitriao.listar() }
+  }
+
   /** Agenda o ponto de retomada para quando a sessao ficar parada. */
   private agendarRetomada(sessionId: string, runId: string): void {
     this.cancelarRetomada(sessionId)

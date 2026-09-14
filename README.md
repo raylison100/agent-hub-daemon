@@ -200,6 +200,17 @@ worktree git isolada. O custo do filho entra no run pai.
 - Push do PWA: chaves VAPID em `~/.agent-hub/vapid.json`, envio em aprovacao
   pendente, fim de run e automacao concluida.
 
+## Compartilhar modelos
+
+`src/compartilhar.ts` implementa os dois lados. `Anfitriao` abre uma conexao de
+dispositivo no relay por convite, com a sala e a chave de ponta a ponta daquele
+convite, e atende so `/v1/chat/completions` e `/v1/models` dos modelos liberados,
+com limite diario e um pedido por vez, repassando ao Ollama local. `Convidados`
+guarda os convites recebidos (sala cifrada, fora do ambiente do processo), gera
+um perfil por modelo e expoe `/compartilhado/<id>/v1` so para a propria maquina;
+o adaptador compativel com OpenAI do agente fala com esse endereco, que atravessa
+o relay. Teste de ponta a ponta em `scripts/compartilhamento/testar.sh`.
+
 ## Acesso remoto
 
 Com `relay_url` no config, o daemon abre conexao de saida para o relay e passa a

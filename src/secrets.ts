@@ -68,6 +68,19 @@ export class SecretStore {
     return changes > 0
   }
 
+  /** Cifra um valor com a chave local sem cadastrar como segredo nem expor no ambiente do processo. */
+  seal(value: string): string {
+    const iv = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', this.key, iv)
+    const enc = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
+    return [iv, cipher.getAuthTag(), enc].map((b) => b.toString('base64')).join('.')
+  }
+
+  unseal(sealed: string): string {
+    const [iv, tag, enc] = sealed.split('.').map((p) => Buffer.from(p, 'base64'))
+    return this.decrypt({ iv: iv!, tag: tag!, value_enc: enc! })
+  }
+
   /** Lista sem revelar valores: nome, tamanho, ultimos quatro caracteres e origem. */
   list(): SecretInfo[] {
     const fromDb = new Map<string, SecretInfo>()
