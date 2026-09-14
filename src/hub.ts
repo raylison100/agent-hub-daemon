@@ -18,6 +18,7 @@ import {
   type RunMode,
   type ServerFrame,
 } from '@agent-hub/core'
+import { Atualizacao, systemdRunDisponivel } from './atualizacao.js'
 import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
@@ -41,12 +42,19 @@ export class ConnectionHub {
   scheduler!: Scheduler
   triggers!: Triggers
   readonly workflows: WorkflowEngine
+  readonly atualizacao: Atualizacao
 
   constructor(
     private readonly runtime: Runtime,
     private readonly token: string,
   ) {
     this.workflows = new WorkflowEngine(runtime, (f) => this.broadcast(f))
+    let systemdRun: boolean | undefined
+    this.atualizacao = new Atualizacao({
+      home: runtime.config.home,
+      fonte: process.env.AGENT_HUB_RELEASE_URL,
+      supervisionado: () => supervisionado() && (systemdRun ??= systemdRunDisponivel()),
+    })
   }
 
   attach(conn: Conn): void {
@@ -222,6 +230,14 @@ export class ConnectionHub {
       case 'health.list':
         send({ type: 'health.list', items: this.health() })
         return
+      case 'versao.consultar':
+        send({ type: 'versao.estado', estado: await this.atualizacao.estado(frame.forcar) })
+        return
+      case 'versao.atualizar': {
+        const estado = await this.atualizacao.atualizar()
+        this.broadcast({ type: 'versao.estado', estado })
+        return
+      }
       case 'context.list': {
         const dir = runtime.assertWorkspace(frame.workspace)
         send({

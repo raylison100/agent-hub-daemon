@@ -118,7 +118,7 @@ program
   .argument('[pacote]', 'arquivo .tgz ou URL da versao nova; sem ele, so reescreve o servico e reinicia')
   .action((pacote: string | undefined) => {
     if (pacote) {
-      const npm = spawnSync('npm', ['install', '-g', pacote], { stdio: 'inherit' })
+      const npm = spawnSync('npm', ['install', '-g', '--no-audit', '--no-fund', '--allow-scripts=node-pty,better-sqlite3', pacote], { stdio: 'inherit' })
       if (npm.status !== 0) {
         process.exitCode = npm.status ?? 1
         return
