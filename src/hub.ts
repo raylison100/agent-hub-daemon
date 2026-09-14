@@ -232,6 +232,13 @@ export class ConnectionHub {
       case 'health.list':
         send({ type: 'health.list', items: this.health() })
         return
+      case 'midia.ler': {
+        if (!/^[0-9a-f]{64}$/.test(frame.ref)) throw new Error('referencia de midia invalida')
+        const guardada = runtime.store.media(frame.ref)
+        if (!guardada) throw new Error('midia nao encontrada')
+        send({ type: 'midia.conteudo', ref: frame.ref, media_type: guardada.mediaType, data: guardada.bytes.toString('base64') })
+        return
+      }
       case 'arquivo.ler': {
         const lido = lerArquivoDaSessao(runtime, frame.session_id, frame.path)
         send({ type: 'arquivo.conteudo', session_id: frame.session_id, path: frame.path, media_type: lido.mediaType, data: lido.data, size: lido.size })
