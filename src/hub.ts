@@ -19,6 +19,7 @@ import {
   type ServerFrame,
 } from '@agent-hub/core'
 import { Atualizacao, systemdRunDisponivel } from './atualizacao.js'
+import { adicionarPlugin, alternarPlugin, criarPapelDoPlugin, pluginsDoClaudeCode, removerPlugin, resumirPlugins } from './plugins-instalacao.js'
 import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Scheduler } from './schedules.js'
@@ -604,11 +605,33 @@ export class ConnectionHub {
         return
       }
       case 'plugins.list':
-        send({
-          type: 'plugins.list',
-          plugins: runtime.repo.plugins.map((p) => ({ name: p.name, dir: p.dir, skills: p.skills.size, agents: p.profiles.size, mcp: Object.keys(p.mcp).length, hooks: p.hooks.length })),
-        })
+        send(this.listaDePlugins())
         return
+      case 'plugins.claude_code':
+        send({ type: 'plugins.claude_code', plugins: pluginsDoClaudeCode(runtime.config.agentsDir) })
+        return
+      case 'plugins.adicionar': {
+        const entrada = adicionarPlugin(runtime.config.agentsDir, frame)
+        if (entrada.git) runtime.syncGitPlugins((m) => console.log(m))
+        this.pluginsMudaram(send)
+        return
+      }
+      case 'plugins.remover':
+        removerPlugin(runtime.config.agentsDir, frame.chave)
+        this.pluginsMudaram(send)
+        return
+      case 'plugins.alternar':
+        alternarPlugin(runtime.config.agentsDir, frame.chave, frame.enabled)
+        this.pluginsMudaram(send)
+        return
+      case 'plugins.papel': {
+        const plugin = runtime.repo.plugins.find((p) => p.name === frame.plugin)
+        if (!plugin) throw new Error(`plugin nao carregado: ${frame.plugin}`)
+        const arquivo = criarPapelDoPlugin(runtime.config.agentsDir, plugin, frame.modelos)
+        send({ type: 'plugins.papel_criado', papel: plugin.name, arquivo })
+        this.pluginsMudaram(send)
+        return
+      }
       case 'secrets.delete':
         runtime.secrets.delete(frame.name)
         send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
@@ -657,6 +680,19 @@ export class ConnectionHub {
    * Reinicio de verdade. Sob systemd basta sair, que o Restart=always sobe outro; sem supervisao, larga um
    * processo novo com os mesmos argumentos antes de sair, para nao deixar voce sem daemon nenhum.
    */
+  private listaDePlugins(): ServerFrame {
+    const { runtime } = this
+    return { type: 'plugins.list', plugins: resumirPlugins(runtime.config.agentsDir, runtime.repo.plugins, new Map([...runtime.repo.roles].map(([nome, papel]) => [nome, papel.skills ?? []]))) }
+  }
+
+  /** Recarrega o repositorio de agentes depois de mexer em plugins e avisa todas as janelas. */
+  private pluginsMudaram(send: (f: ServerFrame) => void): void {
+    this.runtime.reload()
+    send(this.listaDePlugins())
+    this.broadcast({ type: 'agents.list', agents: this.runtime.agents(), roles: this.runtime.roles(), errors: this.runtime.repo.errors })
+    this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
+  }
+
   private reiniciar(sob: boolean): void {
     if (!sob) {
       const filho = spawn(process.execPath, process.argv.slice(1), {
