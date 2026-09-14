@@ -411,7 +411,12 @@ export class ConnectionHub {
         return
       }
       case 'sync':
-        send({ type: 'sync', session_id: frame.session_id, events: runtime.store.eventsSince(frame.session_id, frame.since_seq) })
+        send({
+          type: 'sync',
+          session_id: frame.session_id,
+          events: runtime.store.eventsSince(frame.session_id, frame.since_seq),
+          active_run_ids: [...this.sessaoDoRun].filter(([, dono]) => dono === frame.session_id).map(([runId]) => runId),
+        })
         return
       case 'run.start':
         this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve, frame.images, frame.role)
