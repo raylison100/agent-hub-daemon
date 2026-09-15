@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { protocolVersion, type ClientFrame, type ServerFrame } from '@agent-hub/core'
 import { registerA2A } from './a2a.js'
 import { registrarRotaDeArquivos } from './arquivos.js'
+import { Canais } from './canais/index.js'
 import { registrarRotasDeCompartilhamento } from './compartilhar.js'
 import { AutomationRunner } from './automation.js'
 import type { DaemonConfig } from './config.js'
@@ -137,6 +138,17 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
   const link = relayFor(runtime.config, relay, hub, triggers, log)
   link?.start()
   runtime.anfitriao.iniciar()
+  const canais = new Canais({
+    store: runtime.store,
+    secrets: runtime.secrets,
+    daemonUrl: `ws://127.0.0.1:${runtime.config.port}/ws`,
+    daemonToken: token,
+    workspacePadrao: runtime.config.workspaces[0] ?? runtime.config.home,
+    log,
+    mudou: () => hub.broadcast({ type: 'canais.estado', canais: canais.estado() }),
+  })
+  hub.canais = canais
+  canais.iniciar()
 
   return {
     app,
@@ -145,6 +157,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
     triggers,
     async close() {
       link?.stop()
+      canais.parar()
       runtime.anfitriao.parar()
       runtime.convidados.parar()
       clearInterval(mcpTimer)

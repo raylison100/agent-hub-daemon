@@ -1,0 +1,154 @@
+import type { Botao, EventosDoTransporte, TipoDeCanal, Transporte } from './tipos.js'
+
+interface TelegramUser {
+  id: number
+  first_name?: string
+  last_name?: string
+  username?: string
+}
+
+interface TelegramMessage {
+  message_id: number
+  chat: { id: number; type: string }
+  from?: TelegramUser
+  text?: string
+}
+
+interface TelegramUpdate {
+  update_id: number
+  message?: TelegramMessage
+  callback_query?: { id: string; from: TelegramUser; data?: string; message?: TelegramMessage }
+}
+
+const maxMessage = 4000
+
+/** Cliente minimo da Bot API do Telegram. */
+export class TelegramApi {
+  constructor(private readonly token: string) {}
+
+  me(): Promise<{ id: number; first_name: string; username: string }> {
+    return this.call('getMe', {})
+  }
+
+  async *updates(signal: AbortSignal, log: (t: string) => void): AsyncGenerator<TelegramUpdate> {
+    let offset = 0
+    while (!signal.aborted) {
+      try {
+        const res = await this.call<TelegramUpdate[]>('getUpdates', { offset, timeout: 30, allowed_updates: ['message', 'callback_query'] }, signal)
+        for (const u of res) {
+          offset = u.update_id + 1
+          yield u
+        }
+      } catch (err) {
+        if (signal.aborted) return
+        log(`getUpdates: ${err instanceof Error ? err.message : String(err)}`)
+        await new Promise((r) => setTimeout(r, 3000))
+      }
+    }
+  }
+
+  async send(chatId: string, text: string, botoes?: Botao[][]): Promise<void> {
+    for (const chunk of split(text)) {
+      await this.call('sendMessage', {
+        chat_id: chatId,
+        text: chunk,
+        reply_markup: botoes ? { inline_keyboard: botoes.map((l) => l.map((b) => ({ text: b.texto, callback_data: b.dados }))) } : undefined,
+      })
+    }
+  }
+
+  async answerCallback(id: string, text: string): Promise<void> {
+    await this.call('answerCallbackQuery', { callback_query_id: id, text })
+  }
+
+  async clearButtons(chatId: number, messageId: number): Promise<void> {
+    await this.call('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } })
+  }
+
+  private async call<T>(method: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+    const res = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: signal ?? AbortSignal.timeout(20000),
+    })
+    const json = (await res.json()) as { ok: boolean; result?: T; description?: string }
+    if (!json.ok || json.result === undefined) throw new Error(json.description ?? `HTTP ${res.status}`)
+    return json.result
+  }
+}
+
+class TransporteTelegram implements Transporte {
+  private controller: AbortController | null = null
+
+  constructor(private readonly api: TelegramApi) {}
+
+  iniciar(eventos: EventosDoTransporte): void {
+    this.controller = new AbortController()
+    const signal = this.controller.signal
+    void (async () => {
+      for await (const u of this.api.updates(signal, eventos.log)) {
+        const m = u.message
+        if (m?.from && m.text) {
+          eventos.mensagem({ conversa: String(m.chat.id), remetente: pessoa(m.from), texto: m.text })
+        }
+        const cb = u.callback_query
+        if (cb?.data) {
+          eventos.botao({
+            conversa: String(cb.message?.chat.id ?? cb.from.id),
+            remetente: pessoa(cb.from),
+            dados: cb.data,
+            confirmar: async (texto) => {
+              await this.api.answerCallback(cb.id, texto)
+              if (cb.message) await this.api.clearButtons(cb.message.chat.id, cb.message.message_id).catch(() => undefined)
+            },
+          })
+        }
+      }
+    })()
+  }
+
+  parar(): void {
+    this.controller?.abort()
+    this.controller = null
+  }
+
+  enviar(conversa: string, texto: string, botoes?: Botao[][]): Promise<void> {
+    return this.api.send(conversa, texto, botoes)
+  }
+}
+
+export const telegram: TipoDeCanal = {
+  id: 'telegram',
+  nome: 'Telegram',
+  descricao: 'Bot gratuito do Telegram. Converse com os agentes, receba as respostas das automacoes e aprove ferramentas pelo celular.',
+  passos: [
+    'No Telegram, abra uma conversa com @BotFather e envie /newbot.',
+    'Escolha um nome e um usuario terminado em "bot". O BotFather responde com o token do bot.',
+    'Cole o token abaixo e salve. O Agent Hub confere o token e mostra o nome do bot.',
+    'Ligue o canal e mande qualquer mensagem para o seu bot. Voce aparece em "Pediram acesso": clique em Permitir.',
+  ],
+  campos: [{ chave: 'token', rotulo: 'Token do bot', segredo: true, obrigatorio: true, exemplo: '123456789:AA...' }],
+  botoes: true,
+  async validar(valores) {
+    const me = await new TelegramApi(valores.token ?? '').me().catch((err: unknown) => {
+      throw new Error(`token recusado pelo Telegram: ${err instanceof Error ? err.message : String(err)}`)
+    })
+    return { conta: `@${me.username}` }
+  },
+  criar(valores) {
+    return new TransporteTelegram(new TelegramApi(valores.token ?? ''))
+  },
+}
+
+function pessoa(u: TelegramUser): { id: string; nome?: string; usuario?: string } {
+  const nome = [u.first_name, u.last_name].filter(Boolean).join(' ') || undefined
+  return { id: String(u.id), nome, usuario: u.username }
+}
+
+function split(text: string): string[] {
+  if (text.length <= maxMessage) return [text || '(vazio)']
+  const parts: string[] = []
+  for (let i = 0; i < text.length; i += maxMessage) parts.push(text.slice(i, i + maxMessage))
+  return parts
+}

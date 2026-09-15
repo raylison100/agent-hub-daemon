@@ -62,6 +62,13 @@ export class SecretStore {
     this.env[name] = value.trim()
   }
 
+  /** Valor de um segredo pelo nome, do banco ou do ambiente, para uso interno do daemon. */
+  get(name: string): string | undefined {
+    const row = this.db.prepare('SELECT * FROM secrets WHERE name = ?').get(name) as { iv: Buffer; tag: Buffer; value_enc: Buffer } | undefined
+    if (row) return this.decrypt(row)
+    return this.env[name] || undefined
+  }
+
   delete(name: string): boolean {
     const changes = this.db.prepare('DELETE FROM secrets WHERE name = ?').run(name).changes
     if (changes > 0) delete this.env[name]

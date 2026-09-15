@@ -23,6 +23,7 @@ import { Atualizacao, systemdRunDisponivel } from './atualizacao.js'
 import { adicionarPlugin, alternarPlugin, criarPapelDoPlugin, pluginsDoClaudeCode, removerPlugin, resumirPlugins } from './plugins-instalacao.js'
 import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
+import type { Canais } from './canais/index.js'
 import type { Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
 import { WorkflowEngine } from './workflows.js'
@@ -44,6 +45,7 @@ export class ConnectionHub {
   private readonly mcpErrors = new Map<string, string>()
   scheduler!: Scheduler
   triggers!: Triggers
+  canais!: Canais
   readonly workflows: WorkflowEngine
   readonly atualizacao: Atualizacao
 
@@ -581,6 +583,34 @@ export class ConnectionHub {
       case 'secrets.set':
         runtime.secrets.set(frame.name, frame.value)
         send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
+        return
+      case 'canais.estado':
+        send({ type: 'canais.estado', canais: this.canais.estado() })
+        return
+      case 'canal.salvar':
+        await this.canais.salvar(frame.canal, frame.valores)
+        send({ type: 'canais.estado', canais: this.canais.estado(), aviso: 'canal salvo' })
+        return
+      case 'canal.ligar':
+        this.canais.ligar(frame.canal, frame.ligado)
+        send({ type: 'canais.estado', canais: this.canais.estado() })
+        return
+      case 'canal.permitir':
+        this.canais.permitir(frame.canal, frame.pessoa)
+        send({ type: 'canais.estado', canais: this.canais.estado() })
+        return
+      case 'canal.remover_pessoa':
+        this.canais.removerPessoa(frame.canal, frame.pessoa)
+        send({ type: 'canais.estado', canais: this.canais.estado() })
+        return
+      case 'canal.testar': {
+        const aviso = await this.canais.testar(frame.canal)
+        send({ type: 'canais.estado', canais: this.canais.estado(), aviso })
+        return
+      }
+      case 'canal.apagar':
+        this.canais.apagar(frame.canal)
+        send({ type: 'canais.estado', canais: this.canais.estado() })
         return
       case 'fs.list': {
         const workspace = this.workspaceOf(frame.session_id, frame.workspace)

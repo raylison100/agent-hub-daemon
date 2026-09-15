@@ -1,0 +1,269 @@
+import { NodeDaemonClient, type ServerFrame } from '@agent-hub/core'
+import type { BotaoRecebido, MensagemRecebida, Pessoa, TipoDeCanal, Transporte } from './tipos.js'
+
+export interface PessoaPermitida extends Pessoa {
+  conversa?: string
+}
+
+export interface PedidoDeAcesso extends Pessoa {
+  conversa: string
+  em: number
+}
+
+export interface ConversaDoCanal {
+  sessionId?: string
+  workspace?: string
+  agent?: string
+}
+
+export interface ConfigDoCanal {
+  ligado: boolean
+  conta: string | null
+  valores: Record<string, string>
+  permitidos: PessoaPermitida[]
+  pedidos: PedidoDeAcesso[]
+  conversas: Record<string, ConversaDoCanal>
+}
+
+export interface DependenciasDaPonte {
+  daemonUrl: string
+  daemonToken: string
+  workspacePadrao: string
+  config(): ConfigDoCanal
+  alterar(mudanca: (c: ConfigDoCanal) => void): void
+  log(texto: string): void
+}
+
+interface RunEmCurso {
+  conversa: string
+  texto: string[]
+  ferramentas: number
+}
+
+const ajuda = [
+  'Comandos:',
+  '/workspace <dir>  define o diretorio da proxima sessao',
+  '/agente <nome>    fixa o agente da proxima sessao (vazio = roteamento)',
+  '/nova             comeca uma sessao nova na proxima mensagem',
+  '/sessoes          ultimas sessoes',
+  '/custo            custo de hoje por agente',
+  '/cancelar         cancela o run atual',
+  '/aprovar <codigo> e /negar <codigo>  respondem a um pedido de aprovacao',
+  '/status           conexao com o daemon',
+].join('\n')
+
+/** Liga um canal de conversa ao daemon: sessoes por conversa, comandos, aprovacoes e respostas das automacoes. */
+export class PonteDeCanal {
+  private readonly daemon: NodeDaemonClient
+  private readonly runs = new Map<string, RunEmCurso>()
+  private readonly conversaDaSessao = new Map<string, string>()
+  private readonly aprovacoes = new Map<string, string>()
+  private desligar: (() => void) | null = null
+
+  constructor(
+    private readonly tipo: TipoDeCanal,
+    private readonly transporte: Transporte,
+    private readonly deps: DependenciasDaPonte,
+  ) {
+    this.daemon = new NodeDaemonClient({ url: deps.daemonUrl, token: deps.daemonToken, client: `canal-${tipo.id}`, log: (m) => deps.log(m) })
+  }
+
+  iniciar(): void {
+    this.desligar = this.daemon.on((f) => this.aoReceberQuadro(f))
+    this.daemon.start()
+    this.transporte.iniciar({
+      mensagem: (m) => void this.aoReceberMensagem(m).catch((err: unknown) => this.deps.log(descrever(err))),
+      botao: (b) => void this.aoReceberBotao(b).catch((err: unknown) => this.deps.log(descrever(err))),
+      log: (t) => this.deps.log(t),
+    })
+  }
+
+  parar(): void {
+    this.transporte.parar()
+    this.desligar?.()
+    this.daemon.stop()
+  }
+
+  /** Conversa que recebe avisos: a da primeira pessoa permitida que ja falou com o bot. */
+  conversaPadrao(): string | undefined {
+    return this.deps.config().permitidos.find((p) => p.conversa)?.conversa
+  }
+
+  async enviar(conversa: string, texto: string): Promise<void> {
+    await this.transporte.enviar(conversa, texto)
+  }
+
+  private permitido(id: string): PessoaPermitida | undefined {
+    return this.deps.config().permitidos.find((p) => p.id === id)
+  }
+
+  private async aoReceberMensagem(m: MensagemRecebida): Promise<void> {
+    const pessoa = this.permitido(m.remetente.id)
+    if (!pessoa) {
+      await this.registrarPedido(m)
+      return
+    }
+    if (pessoa.conversa !== m.conversa || pessoa.nome !== (m.remetente.nome ?? pessoa.nome)) {
+      this.deps.alterar((c) => {
+        const alvo = c.permitidos.find((p) => p.id === m.remetente.id)
+        if (alvo) Object.assign(alvo, { conversa: m.conversa, nome: m.remetente.nome ?? alvo.nome, usuario: m.remetente.usuario ?? alvo.usuario })
+      })
+    }
+    const texto = m.texto.trim()
+    if (texto.startsWith('/')) {
+      await this.comando(m.conversa, texto)
+      return
+    }
+    if (!this.daemon.online) {
+      await this.transporte.enviar(m.conversa, 'Daemon desconectado. Tente de novo em instantes.')
+      return
+    }
+    const estado = this.deps.config().conversas[m.conversa] ?? {}
+    let sessionId = estado.sessionId
+    if (!sessionId) {
+      const criada = await this.daemon.request({ type: 'session.create', workspace: estado.workspace ?? this.deps.workspacePadrao, agent: estado.agent, text: texto }, 'session.created')
+      sessionId = criada.session.id
+      this.salvarConversa(m.conversa, { ...estado, sessionId })
+      await this.transporte.enviar(m.conversa, `Sessao nova com ${criada.session.agent}${criada.routed ? ` (roteado por ${criada.routed.intent ?? 'regra'})` : ''}.`)
+    }
+    this.conversaDaSessao.set(sessionId, m.conversa)
+    const iniciado = await this.daemon.request({ type: 'run.start', session_id: sessionId, text: texto }, 'run.started')
+    this.runs.set(iniciado.run_id, { conversa: m.conversa, texto: [], ferramentas: 0 })
+  }
+
+  private async registrarPedido(m: MensagemRecebida): Promise<void> {
+    const jaPediu = this.deps.config().pedidos.some((p) => p.id === m.remetente.id)
+    this.deps.alterar((c) => {
+      c.pedidos = [{ ...m.remetente, conversa: m.conversa, em: Date.now() }, ...c.pedidos.filter((p) => p.id !== m.remetente.id)].slice(0, 20)
+    })
+    if (jaPediu) return
+    const quem = m.remetente.nome ?? m.remetente.usuario ?? m.remetente.id
+    await this.transporte.enviar(m.conversa, `Este bot e privado. Pedido de acesso registrado para ${quem} (id ${m.remetente.id}). Quem administra o Agent Hub libera em Configuracoes > Canais.`)
+  }
+
+  private async comando(conversa: string, texto: string): Promise<void> {
+    const [cmd, ...resto] = texto.split(/\s+/)
+    const arg = resto.join(' ').trim()
+    const estado = this.deps.config().conversas[conversa] ?? {}
+    switch (cmd) {
+      case '/start':
+      case '/ajuda':
+        await this.transporte.enviar(conversa, ajuda)
+        return
+      case '/workspace':
+        this.salvarConversa(conversa, { ...estado, workspace: arg || undefined, sessionId: undefined })
+        await this.transporte.enviar(conversa, arg ? `Workspace: ${arg}` : `Workspace padrao: ${this.deps.workspacePadrao}`)
+        return
+      case '/agente':
+        this.salvarConversa(conversa, { ...estado, agent: arg || undefined, sessionId: undefined })
+        await this.transporte.enviar(conversa, arg ? `Agente: ${arg}` : 'Agente por roteamento.')
+        return
+      case '/nova':
+        this.salvarConversa(conversa, { ...estado, sessionId: undefined })
+        await this.transporte.enviar(conversa, 'A proxima mensagem abre uma sessao nova.')
+        return
+      case '/sessoes': {
+        const res = await this.daemon.request({ type: 'session.list', limit: 5 }, 'session.list')
+        await this.transporte.enviar(conversa, res.sessions.map((s) => `${s.title} (${s.agent}, ${s.costUsd.toFixed(4)} USD)`).join('\n') || 'Nenhuma sessao.')
+        return
+      }
+      case '/custo': {
+        const inicio = new Date()
+        inicio.setHours(0, 0, 0, 0)
+        const res = await this.daemon.request({ type: 'cost.report', group: 'agent', since: inicio.getTime() }, 'cost.report')
+        const total = res.rows.reduce((a, r) => a + r.costUsd, 0)
+        await this.transporte.enviar(conversa, [...res.rows.map((r) => `${r.key}: ${r.costUsd.toFixed(4)} USD em ${r.calls} chamadas`), `total: ${total.toFixed(4)} USD`].join('\n'))
+        return
+      }
+      case '/cancelar': {
+        const runId = [...this.runs.entries()].find(([, r]) => r.conversa === conversa)?.[0]
+        if (runId) this.daemon.send({ type: 'run.cancel', run_id: runId })
+        await this.transporte.enviar(conversa, runId ? 'Cancelamento pedido.' : 'Nenhum run em andamento.')
+        return
+      }
+      case '/aprovar':
+      case '/negar': {
+        const id = this.aprovacoes.get(arg.toLowerCase())
+        if (!id) {
+          await this.transporte.enviar(conversa, 'Codigo de aprovacao desconhecido ou expirado.')
+          return
+        }
+        this.daemon.send({ type: 'approval.respond', approval_id: id, decision: cmd === '/aprovar' ? 'allow' : 'deny' })
+        this.aprovacoes.delete(arg.toLowerCase())
+        await this.transporte.enviar(conversa, cmd === '/aprovar' ? 'Aprovado.' : 'Negado.')
+        return
+      }
+      case '/status':
+        await this.transporte.enviar(conversa, this.daemon.online ? 'Daemon conectado.' : 'Daemon desconectado.')
+        return
+      default:
+        await this.transporte.enviar(conversa, 'Comando desconhecido. /ajuda lista os comandos.')
+    }
+  }
+
+  private async aoReceberBotao(b: BotaoRecebido): Promise<void> {
+    if (!this.permitido(b.remetente.id)) return
+    const [tipo, id, decisao] = b.dados.split(':')
+    if (tipo !== 'apr' || !id || (decisao !== 'allow' && decisao !== 'deny')) return
+    try {
+      this.daemon.send({ type: 'approval.respond', approval_id: id, decision: decisao })
+      await b.confirmar(decisao === 'allow' ? 'Aprovado' : 'Negado')
+    } catch (err) {
+      await b.confirmar(descrever(err))
+    }
+  }
+
+  private aoReceberQuadro(f: ServerFrame): void {
+    if (f.type === 'event') {
+      const run = this.runs.get(f.run_id)
+      if (!run) return
+      const e = f.event
+      if (e.type === 'text_delta') run.texto.push(e.delta)
+      if (e.type === 'tool_call') run.ferramentas += 1
+      if (e.type === 'run_finished') {
+        this.runs.delete(f.run_id)
+        const corpo = run.texto.join('').trim() || '(sem texto)'
+        const rodape = `\n\n[${e.stop}, ${e.steps} passos, ${run.ferramentas} ferramentas, ${e.costUsd.toFixed(4)} USD]${e.error ? `\n${e.error}` : ''}`
+        void this.transporte.enviar(run.conversa, corpo + rodape).catch((err: unknown) => this.deps.log(descrever(err)))
+      }
+      return
+    }
+    if (f.type === 'approval.required') {
+      const conversa = this.conversaDaSessao.get(f.session_id) ?? this.conversaPadrao()
+      if (!conversa) return
+      const codigo = f.approval_id.slice(0, 6).toLowerCase()
+      this.aprovacoes.set(codigo, f.approval_id)
+      const pergunta = `Aprovar ${f.tool} (${f.risk})?\n${JSON.stringify(f.args).slice(0, 1500)}`
+      const envio = this.tipo.botoes
+        ? this.transporte.enviar(conversa, pergunta, [[{ texto: 'Aprovar', dados: `apr:${f.approval_id}:allow` }, { texto: 'Negar', dados: `apr:${f.approval_id}:deny` }]])
+        : this.transporte.enviar(conversa, `${pergunta}\n\nResponda /aprovar ${codigo} ou /negar ${codigo}`)
+      void envio.catch((err: unknown) => this.deps.log(descrever(err)))
+      return
+    }
+    if (f.type === 'automation.finished' && f.notify?.includes(this.tipo.id)) {
+      const conversa = this.conversaPadrao()
+      if (!conversa) {
+        this.deps.log(`automacao ${f.id} terminou, mas nenhuma pessoa permitida falou com o bot ainda`)
+        return
+      }
+      const status = `Automacao ${f.id} terminou com ${f.stop} (${f.cost_usd.toFixed(4)} USD).`
+      if (f.text) {
+        const estado = this.deps.config().conversas[conversa] ?? {}
+        this.salvarConversa(conversa, { ...estado, sessionId: f.session_id, workspace: f.workspace ?? estado.workspace })
+        this.conversaDaSessao.set(f.session_id, conversa)
+      }
+      const corpo = f.text ? `${f.text}\n\n[${status} Responda aqui para continuar essa sessao; /nova volta ao normal.]` : status
+      void this.transporte.enviar(conversa, corpo).catch((err: unknown) => this.deps.log(descrever(err)))
+    }
+  }
+
+  private salvarConversa(conversa: string, estado: ConversaDoCanal): void {
+    this.deps.alterar((c) => {
+      c.conversas[conversa] = estado
+    })
+  }
+}
+
+function descrever(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
