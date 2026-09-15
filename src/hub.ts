@@ -490,10 +490,10 @@ export class ConnectionHub {
         return
       }
       case 'role.save': {
-        const texto = serializeRole(frame.role)
+        const anterior = frame.original ? runtime.repo.roles.get(frame.original) : undefined
+        const texto = serializeRole(frame.role, { delegates: anterior?.delegates, phases: anterior?.phases })
         const pasta = join(runtime.config.agentsDir, 'roles')
         const destino = join(pasta, `${frame.role.name}.md`)
-        const anterior = frame.original ? runtime.repo.roles.get(frame.original) : undefined
         if (frame.original && !anterior) throw new Error(`agente não encontrado: ${frame.original}`)
         if ((!anterior || frame.original !== frame.role.name) && runtime.repo.roles.has(frame.role.name)) throw new Error(`já existe um agente chamado ${frame.role.name}`)
         mkdirSync(pasta, { recursive: true })
