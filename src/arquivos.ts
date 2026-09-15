@@ -34,11 +34,11 @@ const limiteDeLeitura = 20 * 1024 * 1024
 /** Le um arquivo visualizavel do workspace da sessao, para o painel receber pelo proprio canal do protocolo. */
 export function lerArquivoDaSessao(runtime: Runtime, sessionId: string, relativo: string): { mediaType: string; data: string; size: number } {
   const sessao = runtime.store.get(sessionId)
-  if (!sessao) throw new Error('sessao nao encontrada')
+  if (!sessao) throw new Error('sessão não encontrada')
   const tipo = tipoDoArquivo(relativo)
-  if (!tipo || !extensoesVisualizaveis.includes(extname(relativo).toLowerCase())) throw new Error('tipo de arquivo nao visualizavel')
+  if (!tipo || !extensoesVisualizaveis.includes(extname(relativo).toLowerCase())) throw new Error('tipo de arquivo não visualizável')
   const arquivo = resolveInside(sessao.workspace, relativo)
-  if (!existsSync(arquivo) || !statSync(arquivo).isFile()) throw new Error(`arquivo nao encontrado: ${relativo}`)
+  if (!existsSync(arquivo) || !statSync(arquivo).isFile()) throw new Error(`arquivo não encontrado: ${relativo}`)
   const size = statSync(arquivo).size
   if (size > limiteDeLeitura) throw new Error(`arquivo grande demais para o painel (${Math.round(size / 1024 / 1024)} MB); use Abrir fora`)
   return { mediaType: tipo, data: readFileSync(arquivo).toString('base64'), size }
@@ -47,20 +47,20 @@ export function lerArquivoDaSessao(runtime: Runtime, sessionId: string, relativo
 /** Serve arquivos do workspace de uma sessao para o painel de visualizacao, so para a propria maquina e com HTML isolado da origem do daemon. */
 export function registrarRotaDeArquivos(app: FastifyInstance, runtime: Runtime, isLoopback: (ip: string) => boolean): void {
   app.get('/arquivos/:sessao/*', async (req, reply) => {
-    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'so a propria maquina visualiza arquivos' })
+    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'só a própria máquina visualiza arquivos' })
     const { sessao, '*': bruto } = req.params as { sessao: string; '*': string }
     const sessaoInfo = /^[0-9a-f-]{36}$/.test(sessao) ? runtime.store.get(sessao) : undefined
-    if (!sessaoInfo) return reply.code(404).send({ error: 'sessao nao encontrada' })
+    if (!sessaoInfo) return reply.code(404).send({ error: 'sessão não encontrada' })
     const relativo = decodeURIComponent(bruto ?? '')
     const tipo = tipoDoArquivo(relativo)
-    if (!tipo) return reply.code(415).send({ error: 'tipo de arquivo nao visualizavel' })
+    if (!tipo) return reply.code(415).send({ error: 'tipo de arquivo não visualizável' })
     let arquivo: string
     try {
       arquivo = resolveInside(sessaoInfo.workspace, relativo)
     } catch {
-      return reply.code(403).send({ error: 'arquivo fora do workspace da sessao' })
+      return reply.code(403).send({ error: 'arquivo fora do workspace da sessão' })
     }
-    if (!existsSync(arquivo) || !statSync(arquivo).isFile()) return reply.code(404).send({ error: 'arquivo nao encontrado' })
+    if (!existsSync(arquivo) || !statSync(arquivo).isFile()) return reply.code(404).send({ error: 'arquivo não encontrado' })
     reply
       .type(tipo)
       .header('cache-control', 'no-store')

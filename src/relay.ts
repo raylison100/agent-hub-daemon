@@ -92,7 +92,7 @@ export class RelayLink {
           const frame = isSealed(msg.frame) ? await openFrame<ClientFrame>(this.key!, msg.frame) : msg.frame
           void this.hub.handle(conn, frame)
         } catch {
-          conn.send({ type: 'error', message: 'quadro cifrado invalido' })
+          conn.send({ type: 'error', message: 'quadro cifrado inválido' })
         }
         return
       }

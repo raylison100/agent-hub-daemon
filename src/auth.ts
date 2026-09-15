@@ -41,7 +41,7 @@ export class AuthStore {
       throw new Error(`tentativas demais, espere ${Math.ceil((bloqueio.ate - Date.now()) / 1000)} segundos`)
     }
     const guardada = this.lerSenha()
-    if (!guardada) throw new Error('nenhuma senha definida neste daemon; defina em Configuracoes, Conexao')
+    if (!guardada) throw new Error('nenhuma senha definida neste daemon; defina em Configurações, Conexão')
     const esperado = scryptSync(senha, guardada.salt, 64)
     const informado = Buffer.from(guardada.hash, 'hex')
     const ok = esperado.length === informado.length && timingSafeEqual(esperado, informado)

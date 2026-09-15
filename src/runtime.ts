@@ -182,7 +182,7 @@ function routedReason(chosen: ResolvedAgent): string {
   if (chosen.routed) return `regra ${JSON.stringify(chosen.routed.rule.when)}`
   if (chosen.by === 'score') {
     const top = chosen.ranking?.find((r) => r.agent === chosen.agent)
-    return top ? `pontuacao ${top.score} (capacidade ${top.capability}, custo ${top.costPerMillion.toFixed(2)} USD/M)` : 'pontuacao'
+    return top ? `pontuação ${top.score} (capacidade ${top.capability}, custo ${top.costPerMillion.toFixed(2)} USD/M)` : 'pontuação'
   }
   if (chosen.by === 'default') return 'default_agent do routing.json'
   return chosen.by
@@ -239,7 +239,7 @@ export class Runtime {
 
   /** Recarrega perfis, politicas, skills, roteamento, segredos, webhooks e precos do repositorio `agents`. */
   reload(): void {
-    if (!existsSync(this.config.agentsDir)) throw new Error(`diretorio de agentes nao existe: ${this.config.agentsDir}`)
+    if (!existsSync(this.config.agentsDir)) throw new Error(`diretório de agentes não existe: ${this.config.agentsDir}`)
     this.repo = loadAgentsRepo(this.config.agentsDir)
     for (const perfil of this.convidados.perfis()) this.repo.profiles.set(perfil.name, perfil)
     this.pricing = Pricing.fromFile(join(this.config.agentsDir, 'pricing.json'))
@@ -433,7 +433,7 @@ export class Runtime {
     if (scored.chosen) return { agent: this.profile(scored.chosen.agent).name, routed: null, by: 'score', intent, ranking: scored.ranking }
     const padrao = models?.[0] ?? this.repo.routing.default_agent
     if (padrao) return { agent: this.profile(padrao).name, routed: null, by: 'default', intent, ranking: scored.ranking }
-    throw new Error('nenhuma regra casou, nenhum agente pontuou e nao ha default_agent em routing.json')
+    throw new Error('nenhuma regra casou, nenhum agente pontuou e não há default_agent em routing.json')
   }
 
   /** Tokens que a proxima chamada leva: historico que ainda vai ao modelo mais o pedido novo. */
@@ -454,8 +454,8 @@ export class Runtime {
   /** Aviso quando a tabela de precos esta velha; precos de provedor mudam e a tabela e atualizada a mao. */
   pricingStaleness(maxDays = 30): string | null {
     const age = this.pricing.ageDays()
-    if (age === null) return `tabela de precos com version "${this.pricing.version}" sem data; use YYYY-MM-DD para o aviso de idade funcionar`
-    if (age > maxDays) return `tabela de precos de ${this.pricing.version} (${age} dias): confira os precos nos sites dos provedores e atualize agents/pricing.json`
+    if (age === null) return `tabela de preços com version "${this.pricing.version}" sem data; use YYYY-MM-DD para o aviso de idade funcionar`
+    if (age > maxDays) return `tabela de preços de ${this.pricing.version} (${age} dias): confira os preços nos sites dos provedores e atualize agents/pricing.json`
     return null
   }
 
@@ -549,7 +549,7 @@ export class Runtime {
   /** Motivo pelo qual um agente nao pode receber runs agora: chave ausente ou limite diario estourado. */
   private unavailableReason(name: string): string | null {
     const profile = this.repo.profiles.get(name)
-    if (!profile) return 'perfil nao carregado'
+    if (!profile) return 'perfil não carregado'
     const keyEnv = apiKeyEnv(profile)
     if (keyEnv && !process.env[keyEnv]) return `sem chave ${keyEnv}`
     const dayLimit = this.repo.budgets.agents[name]?.day_usd
@@ -557,7 +557,7 @@ export class Runtime {
       const day = new Date()
       day.setHours(0, 0, 0, 0)
       const spent = this.ledger.report('agent', { since: day.getTime() }).find((r) => r.key === name)?.costUsd ?? 0
-      if (spent >= dayLimit) return `limite diario de ${dayLimit} USD atingido`
+      if (spent >= dayLimit) return `limite diário de ${dayLimit} USD atingido`
     }
     return null
   }
@@ -667,7 +667,7 @@ export class Runtime {
     const target = resolve(dir)
     const allowed = this.config.workspaces.some((w) => target === w || target.startsWith(w + sep))
     if (!allowed) throw new Error(`workspace nao permitido: ${dir} (resolvido para ${target}). Adicione em workspaces no config.toml`)
-    if (!existsSync(target)) throw new Error(`workspace nao existe: ${target}`)
+    if (!existsSync(target)) throw new Error(`workspace não existe: ${target}`)
     return target
   }
   /**
@@ -698,10 +698,10 @@ export class Runtime {
   /** Conecta um servidor MCP declarado e registra suas ferramentas. Conector desconectado pelo usuario nao sobe. */
   async ensureMcpServer(name: string): Promise<void> {
     const config = this.repo.mcp.servers[name]
-    if (!config) throw new Error(`conector nao configurado: ${name}`)
-    if (!config.enabled) throw new Error(`conector ${name} esta desconectado; conecte em Configuracoes, Conectores`)
+    if (!config) throw new Error(`conector não configurado: ${name}`)
+    if (!config.enabled) throw new Error(`conector ${name} está desconectado; conecte em Configurações, Conectores`)
     const bearer = config.oauth ? await this.oauth.bearer(name) : undefined
-    if (config.oauth && !bearer) throw new Error(`conector ${name} pede autorizacao: abra Conectores e clique em Autorizar`)
+    if (config.oauth && !bearer) throw new Error(`conector ${name} pede autorização: abra Conectores e clique em Autorizar`)
     this.registry.registerAll(await this.mcp.connect(name, config, bearer, (caiu) => this.onMcpClose?.(caiu)))
   }
   overrideBudget(runId: string, scope: BudgetScope, limitUsd: number): boolean {
@@ -714,7 +714,7 @@ export class Runtime {
   /** Executa um run completo em uma sessao, com escalada para o agente de fallback quando a chamada de ferramenta nao se recupera. */
   async run(req: RunRequest): Promise<RunResult> {
     const session = this.store.get(req.sessionId)
-    if (!session) throw new Error(`sessao nao encontrada: ${req.sessionId}`)
+    if (!session) throw new Error(`sessão não encontrada: ${req.sessionId}`)
     const runId = req.runId ?? randomUUID()
     const regraDePapel = !req.roleOverride && !session.role ? routeRole(this.repo.routing, { text: req.text, workspace: session.workspace }) : null
     const papelPorRegra = regraDePapel && this.repo.roles.has(regraDePapel.role) ? regraDePapel : null
@@ -757,7 +757,7 @@ export class Runtime {
     }
     this.keepAttempt(req, runId, result, profile.name, false)
     const fallback = this.profile(profile.fallback_agent)
-    req.emit({ type: 'escalation', from: profile.name, to: fallback.name, reason: 'chamadas de ferramenta invalidas apos reparo' })
+    req.emit({ type: 'escalation', from: profile.name, to: fallback.name, reason: 'chamadas de ferramenta inválidas após reparo' })
     this.markRunAgent(runId, fallback.name)
     return this.runWith(fallback, session.workspace, req, runId, { extraCostUsd: result.costUsd })
   }
@@ -784,7 +784,7 @@ export class Runtime {
       model: `${local.provider}/${local.model}`,
       by: 'cascade',
       intent: null,
-      reason: escalada ? `${local.name} tenta primeiro; ${escalada.name} se a verificacao falhar` : `${local.name} sem agente para escalar`,
+      reason: escalada ? `${local.name} tenta primeiro; ${escalada.name} se a verificação falhar` : `${local.name} sem agente para escalar`,
     })
     const tentativa = await this.runWith(local, workspace, req, runId, { attempt: true })
     const verificacao = verifyRun({ stop: tentativa.stop, appended: tentativa.appended, workspace }, cascade.checks)
@@ -938,7 +938,7 @@ export class Runtime {
     opts: { policyOverride?: Policy; emit: (event: RunEvent) => void; onApproval: (info: PendingApproval) => void },
   ): Promise<{ text: string; costUsd: number; stop: string; error?: string }> {
     const session = this.store.get(sessionId)
-    if (!session) throw new Error(`sessao nao encontrada: ${sessionId}`)
+    if (!session) throw new Error(`sessão não encontrada: ${sessionId}`)
     const req: RunRequest = { sessionId, text, emit: opts.emit, onApproval: opts.onApproval, policyOverride: opts.policyOverride }
     const result = await this.delegate(req, session.workspace, parentRunId, profile.name, text, profile)
     return { text: result.text, costUsd: result.costUsd, stop: result.stop, error: result.error }
@@ -967,7 +967,7 @@ export class Runtime {
     let worktree: { path: string; branch: string } | undefined
     let childWorkspace = workspace
     if (opts.worktree) {
-      if (!isGitRepo(workspace)) throw new Error('worktree exige que o workspace seja um repositorio git')
+      if (!isGitRepo(workspace)) throw new Error('worktree exige que o workspace seja um repositório git')
       worktree = createWorktree(this.config.home, workspace, runId)
       childWorkspace = worktree.path
     }

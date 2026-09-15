@@ -34,7 +34,7 @@ export async function serveMcp(opts: McpServerOptions): Promise<void> {
     { description: 'Lista as sessoes recentes com agente, workspace e custo.', inputSchema: { limit: z.number().int().positive().max(100).optional() } },
     async ({ limit }) => {
       const res = await daemon.request({ type: 'session.list', limit: limit ?? 20 }, 'session.list')
-      return text(res.sessions.map((s) => `${s.id} | ${s.agent} | ${s.workspace} | ${s.costUsd.toFixed(4)} USD | ${s.title}`).join('\n') || 'nenhuma sessao')
+      return text(res.sessions.map((s) => `${s.id} | ${s.agent} | ${s.workspace} | ${s.costUsd.toFixed(4)} USD | ${s.title}`).join('\n') || 'nenhuma sessão')
     },
   )
 
@@ -60,7 +60,7 @@ export async function serveMcp(opts: McpServerOptions): Promise<void> {
         sessionId = created.session.id
       }
       const result = await runAndWait(daemon, sessionId, task, mode ?? 'draft', opts.runTimeoutMs)
-      return text(`${result.text}\n\n[sessao ${sessionId}, parada ${result.stop}, ${result.steps} passos, ${result.costUsd.toFixed(4)} USD]`)
+      return text(`${result.text}\n\n[sessão ${sessionId}, parada ${result.stop}, ${result.steps} passos, ${result.costUsd.toFixed(4)} USD]`)
     },
   )
 

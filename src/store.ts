@@ -35,7 +35,7 @@ export class SessionStore {
     const id = randomUUID()
     this.db
       .prepare('INSERT INTO sessions (id, agent, workspace, title, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, agent, workspace, title ?? 'Nova sessao', origin, now, now)
+      .run(id, agent, workspace, title ?? 'Nova sessão', origin, now, now)
     return this.get(id)!
   }
 
@@ -86,7 +86,7 @@ export class SessionStore {
     if (patch.role !== undefined) this.db.prepare('UPDATE sessions SET role = ? WHERE id = ?').run(patch.role, id)
     if (patch.mode !== undefined) this.db.prepare('UPDATE sessions SET mode = ? WHERE id = ?').run(patch.mode, id)
     if (patch.group !== undefined) this.db.prepare('UPDATE sessions SET group_name = ? WHERE id = ?').run(patch.group, id)
-    if (patch.title !== undefined) this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(patch.title.trim().slice(0, 120) || 'Sem titulo', id)
+    if (patch.title !== undefined) this.db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(patch.title.trim().slice(0, 120) || 'Sem título', id)
     if (patch.agent !== undefined) this.db.prepare('UPDATE sessions SET agent = ? WHERE id = ?').run(patch.agent, id)
     if (patch.pinned !== undefined) this.db.prepare('UPDATE sessions SET pinned = ? WHERE id = ?').run(patch.pinned ? 1 : 0, id)
     if (patch.archived !== undefined) this.db.prepare('UPDATE sessions SET archived = ? WHERE id = ?').run(patch.archived ? 1 : 0, id)
@@ -122,7 +122,7 @@ export class SessionStore {
   fork(id: string): SessionSummary | undefined {
     const source = this.get(id)
     if (!source) return undefined
-    const copy = this.create(source.agent, source.workspace, `Copia de ${source.title}`.slice(0, 120), 'user')
+    const copy = this.create(source.agent, source.workspace, `Cópia de ${source.title}`.slice(0, 120), 'user')
     const history = this.history(id)
     if (history.length > 0) this.appendMessages(copy.id, `fork-${id}`, history)
     const ponto = this.resume(id)

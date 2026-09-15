@@ -128,17 +128,17 @@ class TransporteWhatsApp implements Transporte {
 export const whatsapp: TipoDeCanal = {
   id: 'whatsapp',
   nome: 'WhatsApp por API',
-  descricao: 'Um numero de WhatsApp conectado a um provedor com API HTTP por instancia. Converse com os agentes pelo WhatsApp.',
+  descricao: 'Um número de WhatsApp conectado a um provedor com API HTTP por instância. Converse com os agentes pelo WhatsApp.',
   passos: [
-    'No painel do provedor, crie uma instancia so para o Agent Hub e conecte um numero dedicado, para os agentes nunca lerem conversas pessoais.',
-    'Desligue a IA de atendimento do provedor nessa instancia, senao ela responde junto com os agentes.',
-    'Gere uma chave de API no painel e cole abaixo com o endereco da API e o nome (slug) da instancia. O Agent Hub confere a conexao.',
-    'Ligue o canal e mande qualquer mensagem de WhatsApp para esse numero. Voce aparece em "Pediram acesso": clique em Permitir.',
-    'Aprovacoes chegam como texto: responda /aprovar <codigo> ou /negar <codigo>.',
+    'No painel do provedor, crie uma instância só para o Agent Hub e conecte um número dedicado, para os agentes nunca lerem conversas pessoais.',
+    'Desligue a IA de atendimento do provedor nessa instância, senão ela responde junto com os agentes.',
+    'Gere uma chave de API no painel e cole abaixo com o endereço da API e o nome (slug) da instância. O Agent Hub confere a conexão.',
+    'Ligue o canal e mande qualquer mensagem de WhatsApp para esse número. Você aparece em "Pediram acesso": clique em Permitir.',
+    'Aprovações chegam como texto: responda /aprovar <código> ou /negar <código>.',
   ],
   campos: [
-    { chave: 'url', rotulo: 'Endereco da API', segredo: false, obrigatorio: true, exemplo: 'https://api.exemplo.com' },
-    { chave: 'instancia', rotulo: 'Instancia', segredo: false, obrigatorio: true, exemplo: 'agent-hub', ajuda: 'O nome (slug) da instancia, como aparece na URL de envio.' },
+    { chave: 'url', rotulo: 'Endereço da API', segredo: false, obrigatorio: true, exemplo: 'https://api.exemplo.com' },
+    { chave: 'instancia', rotulo: 'Instância', segredo: false, obrigatorio: true, exemplo: 'agent-hub', ajuda: 'O nome (slug) da instância, como aparece na URL de envio.' },
     { chave: 'chave', rotulo: 'Chave de API', segredo: true, obrigatorio: true },
   ],
   botoes: false,
@@ -147,9 +147,9 @@ export const whatsapp: TipoDeCanal = {
   async validar(valores) {
     const api = new WhatsAppApi(valores.url ?? '', valores.chave ?? '', valores.instancia ?? '')
     const info = await api.instanciaInfo().catch((err: unknown) => {
-      throw new Error(`a API recusou a conexao: ${err instanceof Error ? err.message : String(err)}`)
+      throw new Error(`a API recusou a conexão: ${err instanceof Error ? err.message : String(err)}`)
     })
-    if (info.status !== 'CONNECTED') throw new Error(`a instancia ${info.name} esta ${info.status}; conecte o numero no painel do provedor antes`)
+    if (info.status !== 'CONNECTED') throw new Error(`a instância ${info.name} está ${info.status}; conecte o número no painel do provedor antes`)
     return { conta: info.phone ? `+${info.phone}` : (info.displayName ?? info.name) }
   },
   criar(valores) {

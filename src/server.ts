@@ -42,24 +42,24 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
   app.get('/health', async () => ({ ok: true, device: runtime.config.deviceName, protocol_version: protocolVersion }))
 
   app.get('/pair/local', async (req, reply) => {
-    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'so a propria maquina pode pedir o token sem pareamento' })
+    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'só a própria máquina pode pedir o token sem pareamento' })
     const origin = req.headers.origin
-    if (!originPermitida(origin, req.headers.host)) return reply.code(403).send({ error: `origem nao permitida: ${origin}` })
+    if (!originPermitida(origin, req.headers.host)) return reply.code(403).send({ error: `origem não permitida: ${origin}` })
     if (origin && origemDeApp(origin)) reply.header('access-control-allow-origin', origin)
     return { url: `ws://${req.headers.host ?? `127.0.0.1:${runtime.config.port}`}/ws`, token, device: runtime.config.deviceName }
   })
 
 
   app.get('/media/:hash', async (req, reply) => {
-    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'so a propria maquina le a midia' })
+    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'só a própria máquina lê a mídia' })
     const { hash } = req.params as { hash: string }
-    if (!/^[0-9a-f]{64}$/.test(hash)) return reply.code(400).send({ error: 'hash invalido' })
+    if (!/^[0-9a-f]{64}$/.test(hash)) return reply.code(400).send({ error: 'hash inválido' })
     const guardada = runtime.store.media(hash)
-    if (!guardada) return reply.code(404).send({ error: 'midia nao encontrada' })
+    if (!guardada) return reply.code(404).send({ error: 'mídia não encontrada' })
     return reply.type(guardada.mediaType).header('cache-control', 'private, max-age=31536000, immutable').send(guardada.bytes)
   })
   app.get('/oauth/start', async (req, reply) => {
-    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'so a propria maquina inicia autorizacao' })
+    if (!isLoopback(req.ip)) return reply.code(403).send({ error: 'só a própria máquina inicia autorização' })
     const server = (req.query as { server?: string }).server
     if (!server) return reply.code(400).send({ error: 'informe ?server=<nome>' })
     try {
@@ -72,7 +72,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
 
   app.get('/oauth/callback', async (req, reply) => {
     const { code, state, error } = req.query as { code?: string; state?: string; error?: string }
-    if (error) return reply.type('text/html').send(pagina(`Autorizacao recusada: ${error}`))
+    if (error) return reply.type('text/html').send(pagina(`Autorização recusada: ${error}`))
     if (!code || !state) return reply.code(400).type('text/html').send(pagina('Resposta sem code ou state.'))
     try {
       const server = await runtime.oauth.finish(state, code, redirectUri(req.headers.host, runtime.config.port))
@@ -85,7 +85,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
   if (runtime.config.webDir) {
     await app.register(fastifyStatic, { root: runtime.config.webDir })
     app.setNotFoundHandler((req, reply) => {
-      if (req.method !== 'GET' || req.url.startsWith('/ws') || req.url.startsWith('/pair')) return reply.code(404).send({ error: 'nao encontrado' })
+      if (req.method !== 'GET' || req.url.startsWith('/ws') || req.url.startsWith('/pair')) return reply.code(404).send({ error: 'não encontrado' })
       return reply.sendFile('index.html')
     })
     log(`interface em http://${runtime.config.host}:${runtime.config.port}`)
@@ -100,7 +100,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
       try {
         frame = JSON.parse(String(raw)) as ClientFrame
       } catch {
-        conn.send({ type: 'error', message: 'quadro invalido' })
+        conn.send({ type: 'error', message: 'quadro inválido' })
         return
       }
       void hub.handle(conn, frame)
@@ -112,7 +112,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
 
   await app.listen({ host: runtime.config.host, port: runtime.config.port })
   runtime.onMcpClose = (name) => {
-    log(`conector ${name} caiu; reconecta na proxima verificacao`)
+    log(`conector ${name} caiu; reconecta na próxima verificação`)
     hub.broadcast({ type: 'mcp.servers', servers: hub.serverList() })
   }
   const manterMcp = async (): Promise<void> => {

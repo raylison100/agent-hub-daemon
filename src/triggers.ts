@@ -82,14 +82,14 @@ export class Triggers {
     const spec = JSON.parse(row.spec_json) as TriggerParsed
     if (!spec.enabled) return { accepted: false, reason: 'gatilho desativado' }
     const lower = lowerKeys(headers)
-    if (!this.verify(spec, lower, body)) return { accepted: false, reason: 'assinatura invalida' }
+    if (!this.verify(spec, lower, body)) return { accepted: false, reason: 'assinatura inválida' }
     let payload: unknown
     try {
       payload = JSON.parse(body)
     } catch {
-      return { accepted: false, reason: 'corpo nao e JSON' }
+      return { accepted: false, reason: 'corpo não é JSON' }
     }
-    if (!matchesFilter(spec.filter, payload)) return { accepted: false, reason: 'filtro nao casou' }
+    if (!matchesFilter(spec.filter, payload)) return { accepted: false, reason: 'filtro não casou' }
     const key = deliveryKey(spec, lower, payload, body)
     const inserted = this.db
       .prepare('INSERT OR IGNORE INTO trigger_deliveries (trigger_id, delivery_key, received_at) VALUES (?, ?, ?)')
@@ -125,7 +125,7 @@ export class Triggers {
   private secretFor(spec: TriggerParsed): string {
     const name = spec.secret_ref.slice(1)
     const value = this.env[name]
-    if (!value) throw new Error(`variavel ${name} nao definida para o gatilho ${spec.id}`)
+    if (!value) throw new Error(`variável ${name} não definida para o gatilho ${spec.id}`)
     return value
   }
 

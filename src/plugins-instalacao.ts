@@ -87,7 +87,7 @@ export function resumirPlugins(agentsDir: string, carregados: PluginBundle[], pa
       nomes_skills: bundle ? [...bundle.skills.keys()].sort() : [],
       nomes_mcp: bundle ? Object.keys(bundle.mcp).sort() : [],
       requisitos: existsSync(dir) ? requisitosDoPlugin(dir, env) : [],
-      erros: bundle?.errors.map((e) => e.message) ?? (existsSync(dir) || !entrada.enabled ? [] : [entrada.git ? 'repositorio ainda nao clonado' : 'pasta nao encontrada']),
+      erros: bundle?.errors.map((e) => e.message) ?? (existsSync(dir) || !entrada.enabled ? [] : [entrada.git ? 'repositório ainda não clonado' : 'pasta não encontrada']),
       papel,
     }
   })
@@ -137,17 +137,17 @@ export function adicionarPlugin(agentsDir: string, pedido: { path?: string; git?
   let entrada: PluginEntry
   if (path) {
     const dir = resolve(path)
-    if (!existsSync(dir)) throw new Error(`pasta nao encontrada: ${dir}`)
+    if (!existsSync(dir)) throw new Error(`pasta não encontrada: ${dir}`)
     if (!lerManifesto(dir) && !existsSync(join(dir, 'skills')) && !existsSync(join(dir, '.mcp.json'))) {
-      throw new Error(`${dir} nao parece um plugin do Claude Code: falta .claude-plugin/plugin.json, skills/ ou .mcp.json`)
+      throw new Error(`${dir} não parece um plugin do Claude Code: falta .claude-plugin/plugin.json, skills/ ou .mcp.json`)
     }
     entrada = { path: dir, enabled: true }
   } else {
-    if (!/^(https:\/\/|git@|ssh:\/\/)/.test(git!)) throw new Error('URL git precisa comecar com https://, ssh:// ou git@')
+    if (!/^(https:\/\/|git@|ssh:\/\/)/.test(git!)) throw new Error('URL git precisa começar com https://, ssh:// ou git@')
     entrada = { git: git!, ref: pedido.ref?.trim() || undefined, enabled: true }
   }
   const chave = chaveDaEntrada(agentsDir, entrada)
-  if (entradas.some((e) => chaveDaEntrada(agentsDir, e) === chave)) throw new Error('esse plugin ja esta na lista')
+  if (entradas.some((e) => chaveDaEntrada(agentsDir, e) === chave)) throw new Error('esse plugin já está na lista')
   gravarEntradas(agentsDir, [...entradas, entrada])
   return entrada
 }
@@ -156,7 +156,7 @@ export function adicionarPlugin(agentsDir: string, pedido: { path?: string; git?
 export function removerPlugin(agentsDir: string, chave: string): void {
   const entradas = lerEntradas(agentsDir)
   const restantes = entradas.filter((e) => chaveDaEntrada(agentsDir, e) !== chave)
-  if (restantes.length === entradas.length) throw new Error('plugin nao encontrado na lista')
+  if (restantes.length === entradas.length) throw new Error('plugin não encontrado na lista')
   gravarEntradas(agentsDir, restantes)
 }
 
@@ -164,7 +164,7 @@ export function removerPlugin(agentsDir: string, chave: string): void {
 export function alternarPlugin(agentsDir: string, chave: string, enabled: boolean): void {
   const entradas = lerEntradas(agentsDir)
   const alvo = entradas.find((e) => chaveDaEntrada(agentsDir, e) === chave)
-  if (!alvo) throw new Error('plugin nao encontrado na lista')
+  if (!alvo) throw new Error('plugin não encontrado na lista')
   alvo.enabled = enabled
   gravarEntradas(agentsDir, entradas)
 }
@@ -172,11 +172,11 @@ export function alternarPlugin(agentsDir: string, chave: string, enabled: boolea
 /** Grava um papel com as skills, os servidores MCP e as ferramentas de escrita do plugin. */
 export function criarPapelDoPlugin(agentsDir: string, plugin: PluginBundle, modelos: string[]): string {
   if (modelos.length === 0) throw new Error('escolha ao menos um modelo para o papel')
-  if (plugin.skills.size === 0 && Object.keys(plugin.mcp).length === 0) throw new Error(`o plugin ${plugin.name} nao tem skills nem servidores MCP para um papel`)
+  if (plugin.skills.size === 0 && Object.keys(plugin.mcp).length === 0) throw new Error(`o plugin ${plugin.name} não tem skills nem servidores MCP para um papel`)
   const dir = join(agentsDir, 'roles')
   mkdirSync(dir, { recursive: true })
   const arquivo = join(dir, `${plugin.name}.md`)
-  if (existsSync(arquivo)) throw new Error(`ja existe o papel ${plugin.name} em ${arquivo}`)
+  if (existsSync(arquivo)) throw new Error(`já existe o papel ${plugin.name} em ${arquivo}`)
   const skills = [...plugin.skills.values()].sort((a, b) => a.name.localeCompare(b.name))
   const descricao = (lerManifesto(plugin.dir)?.description ?? `Usa as skills do plugin ${plugin.name}`).replace(/\s+/g, ' ').slice(0, 160)
   const texto = [

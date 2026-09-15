@@ -88,7 +88,7 @@ export class AutomationRunner {
     if (!opts.manual && this.paused) return
     const spentToday = this.spentToday(spec.id)
     if (spentToday >= spec.budget.day_usd) {
-      this.broadcast({ type: 'automation.error', kind: spec.kind, id: spec.id, message: `orcamento diario esgotado: ${spentToday.toFixed(4)} USD` })
+      this.broadcast({ type: 'automation.error', kind: spec.kind, id: spec.id, message: `orçamento diário esgotado: ${spentToday.toFixed(4)} USD` })
       return
     }
     this.running.add(key)
@@ -144,7 +144,7 @@ export class AutomationRunner {
         text: notify ? resposta.texto : undefined,
       })
       void this.runtime.push.send({
-        title: `Automacao ${spec.id} terminou`,
+        title: `Automação ${spec.id} terminou`,
         body: `${result.stop}, ${result.costUsd.toFixed(4)} USD`,
         url: `/session/${session.id}`,
         tag: `automation-${spec.id}`,

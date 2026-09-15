@@ -78,7 +78,7 @@ export class Scheduler {
 
   async runNow(id: string): Promise<void> {
     const row = this.db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as ScheduleRow | undefined
-    if (!row) throw new Error(`agendamento nao encontrado: ${id}`)
+    if (!row) throw new Error(`agendamento não encontrado: ${id}`)
     await this.fire(JSON.parse(row.spec_json) as ScheduleParsed, true)
   }
 

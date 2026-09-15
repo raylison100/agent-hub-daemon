@@ -26,7 +26,7 @@ export class Webhooks {
   private async deliver(hook: WebhookConfig, body: string): Promise<void> {
     const secret = this.env[hook.secret_ref.slice(1)]
     if (!secret) {
-      this.log(`webhook ${hook.name}: variavel ${hook.secret_ref} nao definida`)
+      this.log(`webhook ${hook.name}: variável ${hook.secret_ref} não definida`)
       return
     }
     const id = `msg_${randomUUID()}`

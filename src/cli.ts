@@ -27,7 +27,7 @@ import { Scheduler } from './schedules.js'
 import { startServer } from './server.js'
 
 const program = new Command()
-program.name('agent-hub-daemon').description('Servico local do Agent Hub').version('0.1.0')
+program.name('agent-hub-daemon').description('Serviço local do Agent Hub').version('0.1.0')
 
 program
   .command('init')
@@ -35,13 +35,13 @@ program
   .action(() => {
     const config = loadConfig()
     const file = join(config.home, 'config.toml')
-    if (existsSync(file)) console.log(`ja existe: ${file}`)
+    if (existsSync(file)) console.log(`já existe: ${file}`)
     else {
       writeFileSync(file, exampleConfig())
       console.log(`criado: ${file}. Edite agents_dir e workspaces antes de iniciar.`)
     }
     const envFile = join(config.home, '.env')
-    if (existsSync(envFile)) console.log(`ja existe: ${envFile}`)
+    if (existsSync(envFile)) console.log(`já existe: ${envFile}`)
     else {
       writeFileSync(envFile, envTemplate, { mode: 0o600 })
       console.log(`criado: ${envFile}. Preencha as chaves de API.`)
@@ -50,13 +50,13 @@ program
 
 program
   .command('instalar')
-  .description('Prepara esta maquina: config, agentes iniciais, servico do systemd e teste de saude')
-  .option('--sem-servico', 'nao instala o servico do systemd')
-  .option('--substituir-servico', 'troca um servico agent-hub que aponta para outra instalacao')
+  .description('Prepara esta máquina: config, agentes iniciais, serviço do systemd e teste de saúde')
+  .option('--sem-servico', 'não instala o serviço do systemd')
+  .option('--substituir-servico', 'troca um serviço agent-hub que aponta para outra instalação')
   .action(async (opts: { semServico?: boolean; substituirServico?: boolean }) => {
     const passo = (nome: string, r: StepResult) => console.log(`${r.ok ? 'ok   ' : 'falha'} ${nome}: ${r.detail}`)
     const nativo = await checkNative()
-    passo('modulos nativos', nativo)
+    passo('módulos nativos', nativo)
     if (!nativo.ok) {
       process.exitCode = 1
       return
@@ -68,37 +68,37 @@ program
     ensureToken(config.home)
     const envFile = join(config.home, '.env')
     if (!existsSync(envFile)) writeFileSync(envFile, envTemplate, { mode: 0o600 })
-    passo('interface', config.webDir ? { ok: true, detail: config.webDir } : { ok: false, detail: 'build da interface nao encontrado' })
+    passo('interface', config.webDir ? { ok: true, detail: config.webDir } : { ok: false, detail: 'build da interface não encontrado' })
     if (opts.semServico) {
-      console.log('\nsem servico: rode "agent-hub start" para subir o daemon')
+      console.log('\nsem serviço: rode "agent-hub start" para subir o daemon')
       return
     }
     const alvo = serviceTarget()
     if (alvo && alvo !== currentCli() && !opts.substituirServico) {
-      passo('servico', { ok: false, detail: `ja existe um ${serviceName} apontando para ${alvo}; use --substituir-servico para trocar` })
+      passo('serviço', { ok: false, detail: `já existe um ${serviceName} apontando para ${alvo}; use --substituir-servico para trocar` })
       process.exitCode = 1
       return
     }
     const servico = installService(config.home)
-    passo('servico', servico)
+    passo('serviço', servico)
     if (!servico.ok) {
       process.exitCode = 1
       return
     }
     const saude = await waitHealth(config.host, config.port)
-    passo('saude', saude)
+    passo('saúde', saude)
     if (!saude.ok) {
       process.exitCode = 1
       return
     }
-    console.log(`\nAbra http://${config.host}:${config.port} e cadastre uma chave em Configuracoes, Chaves.`)
+    console.log(`\nAbra http://${config.host}:${config.port} e cadastre uma chave em Configurações, Chaves.`)
     console.log(`Pastas liberadas para os agentes: ${config.workspaces.join(', ') || 'nenhuma'} (edite em ${join(config.home, 'config.toml')}).`)
-    console.log('Modelo local e opcional: com o Ollama em 127.0.0.1:11434, o agente qwen3 passa a funcionar.')
+    console.log('Modelo local é opcional: com o Ollama em 127.0.0.1:11434, o agente qwen3 passa a funcionar.')
   })
 
 program
   .command('servico')
-  .description('Grava o servico do systemd apontando para esta instalacao e reinicia o daemon')
+  .description('Grava o serviço do systemd apontando para esta instalação e reinicia o daemon')
   .action(async () => {
     const config = loadConfig()
     const r = installService(config.home)
@@ -114,8 +114,8 @@ program
 
 program
   .command('atualizar')
-  .description('Instala a versao nova do pacote e reinicia o servico com o Node atual')
-  .argument('[pacote]', 'arquivo .tgz ou URL da versao nova; sem ele, so reescreve o servico e reinicia')
+  .description('Instala a versão nova do pacote e reinicia o serviço com o Node atual')
+  .argument('[pacote]', 'arquivo .tgz ou URL da versão nova; sem ele, só reescreve o serviço e reinicia')
   .action((pacote: string | undefined) => {
     if (pacote) {
       const npm = spawnSync('npm', ['install', '-g', '--no-audit', '--no-fund', '--allow-scripts=node-pty,better-sqlite3', pacote], { stdio: 'inherit' })
@@ -172,7 +172,7 @@ program
       const res = await fetch(`http://${config.host}:${config.port}/health`)
       console.log(await res.text())
     } catch {
-      console.log('daemon nao esta respondendo')
+      console.log('daemon não está respondendo')
       process.exitCode = 1
     }
   })
@@ -180,8 +180,8 @@ program
 program
   .command('pair')
   .description('Mostra os dados para conectar um cliente, local ou pelo relay, com link e QR de emparelhamento')
-  .option('--web <url>', 'URL onde a interface web esta servida', 'http://localhost:5173')
-  .option('--no-qr', 'nao desenhar o QR no terminal')
+  .option('--web <url>', 'URL onde a interface web está servida', 'http://localhost:5173')
+  .option('--no-qr', 'não desenhar o QR no terminal')
   .action(async (opts: { web: string; qr: boolean }) => {
     const config = loadConfig()
     const token = ensureToken(config.home)
@@ -196,10 +196,10 @@ program
       console.log(`dispositivo: ${device} (${config.deviceName})`)
       Object.assign(pair, { mode: 'relay', url: config.relayUrl, account, device })
     } else {
-      console.log('relay: nao configurado (relay_url no config.toml)')
+      console.log('relay: não configurado (relay_url no config.toml)')
     }
     const link = `${opts.web.replace(/\/$/, '')}/connect#pair=${Buffer.from(JSON.stringify(pair)).toString('base64url')}`
-    console.log(`\nlink de emparelhamento (contem segredos, nao compartilhe):\n${link}`)
+    console.log(`\nlink de emparelhamento (contém segredos, não compartilhe):\n${link}`)
     if (opts.qr) {
       const { toString } = await import('qrcode')
       console.log(await toString(link, { type: 'terminal', small: true }))
@@ -221,11 +221,11 @@ program
 
 program
   .command('mcp')
-  .description('Expoe o daemon como servidor MCP por stdio, para o Claude Code, o Claude Desktop ou outro cliente MCP')
-  .option('--url <url>', 'URL do daemon ou do relay; padrao: daemon local do config')
+  .description('Expõe o daemon como servidor MCP por stdio, para o Claude Code, o Claude Desktop ou outro cliente MCP')
+  .option('--url <url>', 'URL do daemon ou do relay; padrão: daemon local do config')
   .option('--relay-account <token>', 'token de conta, quando pelo relay')
   .option('--device <id>', 'id do dispositivo, quando pelo relay')
-  .option('--timeout <ms>', 'tempo maximo de um run', '900000')
+  .option('--timeout <ms>', 'tempo máximo de um run', '900000')
   .action(async (opts: { url?: string; relayAccount?: string; device?: string; timeout: string }) => {
     const config = loadConfig()
     await serveMcp({
@@ -239,7 +239,7 @@ program
 
 program
   .command('workflows')
-  .description('Lista workflows declarativos com custo maximo, ou roda um deles')
+  .description('Lista workflows declarativos com custo máximo, ou roda um deles')
   .argument('[nome]', 'nome do workflow para rodar')
   .option('-w, --workspace <dir>', 'workspace do run')
   .option('-i, --input <k=v...>', 'entradas do workflow')
@@ -263,11 +263,11 @@ program
     if (!nome) {
       const parados = engine.pending()
       for (const w of engine.list()) {
-        console.log(`${w.name}\t${w.mode}\tentradas ${w.inputs.join(',') || '-'}\tteto do workflow ${w.budgetUsd === null ? 'sem teto' : `${w.budgetUsd.toFixed(2)} USD`}\tsoma dos orcamentos ${w.maxCostUsd === null ? 'indefinida' : `${w.maxCostUsd.toFixed(4)} USD`}\t${w.description}`)
+        console.log(`${w.name}\t${w.mode}\tentradas ${w.inputs.join(',') || '-'}\tteto do workflow ${w.budgetUsd === null ? 'sem teto' : `${w.budgetUsd.toFixed(2)} USD`}\tsoma dos orçamentos ${w.maxCostUsd === null ? 'indefinida' : `${w.maxCostUsd.toFixed(4)} USD`}\t${w.description}`)
       }
       if (parados.length > 0) {
-        console.log('\nparados no meio, da para continuar com --continuar <run_id>:')
-        for (const p of parados) console.log(`${p.runId}\t${p.name}\t${p.status}\tproxima etapa ${p.nextStep ?? '-'}\t${p.costUsd.toFixed(4)} USD`)
+        console.log('\nparados no meio, dá para continuar com --continuar <run_id>:')
+        for (const p of parados) console.log(`${p.runId}\t${p.name}\t${p.status}\tpróxima etapa ${p.nextStep ?? '-'}\t${p.costUsd.toFixed(4)} USD`)
       }
       return
     }
@@ -298,56 +298,56 @@ program
     for (const r of rows) {
       const spec = JSON.parse(r.spec_json) as { source: string; agent: string; mode: string; enabled: boolean }
       const last = r.last_fired_at ? new Date(r.last_fired_at).toISOString() : 'nunca'
-      console.log(`${r.id}\t${spec.enabled ? 'on' : 'off'}\t${spec.source}\t${spec.agent}\t${spec.mode}\t${r.source}\tultimo ${last}`)
+      console.log(`${r.id}\t${spec.enabled ? 'on' : 'off'}\t${spec.source}\t${spec.agent}\t${spec.mode}\t${r.source}\túltimo ${last}`)
     }
   })
 
 program
   .command('agents')
-  .description('Lista perfis e papeis carregados, com os erros de carregamento')
+  .description('Lista perfis e papéis carregados, com os erros de carregamento')
   .action(() => {
     const runtime = new Runtime(loadConfig())
     for (const a of runtime.agents()) console.log(`${a.name}\t${a.provider}/${a.model}\t${a.reasoning}\t${a.description}`)
     const papeis = runtime.roles()
-    if (papeis.length > 0) console.log('\npapeis (papel roda em qualquer um dos modelos listados):')
+    if (papeis.length > 0) console.log('\npapéis (papel roda em qualquer um dos modelos listados):')
     for (const r of papeis) console.log(`${r.name}\tmodelos: ${r.models.join(', ')}\t${r.description}`)
     reportErrors(runtime)
   })
 
 program
   .command('route <texto>')
-  .description('Mostra a decisao do roteador para um pedido, com o ranking custo x capacidade, sem gastar tokens')
-  .option('--at <iso>', 'simula outro instante para o preco por horario, ex.: 2026-09-14T02:30:00Z')
-  .option('--imagem', 'simula um pedido com imagem anexada, que exige agente com visao')
-  .option('--contexto <tokens>', 'simula o historico ja acumulado na sessao, em tokens')
-  .option('--papel <nome>', 'restringe aos modelos declarados no papel, como a sessao faria')
-  .option('--lote', 'simula tarefa de lote, sem pressa: o custo pesa mais e agentes so de lote entram')
+  .description('Mostra a decisão do roteador para um pedido, com o ranking custo x capacidade, sem gastar tokens')
+  .option('--at <iso>', 'simula outro instante para o preço por horário, ex.: 2026-09-14T02:30:00Z')
+  .option('--imagem', 'simula um pedido com imagem anexada, que exige agente com visão')
+  .option('--contexto <tokens>', 'simula o histórico já acumulado na sessão, em tokens')
+  .option('--papel <nome>', 'restringe aos modelos declarados no papel, como a sessão faria')
+  .option('--lote', 'simula tarefa de lote, sem pressa: o custo pesa mais e agentes só de lote entram')
   .action((texto: string, opts: { at?: string; imagem?: boolean; contexto?: string; papel?: string; lote?: boolean }) => {
     const runtime = new Runtime(loadConfig())
     const at = opts.at ? new Date(opts.at) : undefined
-    if (at && Number.isNaN(at.getTime())) throw new Error(`instante invalido: ${opts.at}`)
+    if (at && Number.isNaN(at.getTime())) throw new Error(`instante inválido: ${opts.at}`)
     if (at) console.log(`simulando o instante ${at.toISOString()}`)
     const contexto = opts.contexto === undefined ? undefined : Number(opts.contexto) + approxTokens(texto)
-    if (contexto !== undefined && !Number.isFinite(contexto)) throw new Error(`contexto invalido: ${opts.contexto}`)
+    if (contexto !== undefined && !Number.isFinite(contexto)) throw new Error(`contexto inválido: ${opts.contexto}`)
     if (contexto !== undefined) console.log(`simulando ${contexto} tokens de contexto na chamada`)
     const stale = runtime.pricingStaleness()
     if (stale) console.error(`aviso: ${stale}`)
     const intent = classifyIntent(texto, runtime.repo.routing.intents)
     const delega = needsDelegation(texto)
     const ruled = opts.imagem ? null : route(runtime.repo.routing, { text: texto, workspace: process.cwd() })
-    console.log(`intencao por palavra chave: ${intent ?? 'nenhuma'}`)
-    if (delega) console.log('pedido fala em subagente ou delegacao: so entram agentes que delegam')
+    console.log(`intenção por palavra chave: ${intent ?? 'nenhuma'}`)
+    if (delega) console.log('pedido fala em subagente ou delegação: só entram agentes que delegam')
     const modelos = opts.papel ? runtime.role(opts.papel).models : undefined
-    if (modelos) console.log(`papel ${opts.papel}: so entram ${modelos.join(', ')}`)
+    if (modelos) console.log(`papel ${opts.papel}: só entram ${modelos.join(', ')}`)
     if (ruled) console.log(`regra: ${JSON.stringify(ruled.rule.when)} -> ${ruled.agent}`)
     const latencia = opts.lote === true ? 'lote' : 'interativo'
-    if (opts.lote) console.log('classe de latencia: lote, o custo pesa mais na pontuacao')
+    if (opts.lote) console.log('classe de latência: lote, o custo pesa mais na pontuação')
     const scored = runtime.scoreFor(intent, texto, at, opts.imagem === true, delega, contexto, modelos, latencia)
     if (scored.ranking.length === 0) {
-      console.log('pontuacao desligada: sem bloco scoring em routing.json')
+      console.log('pontuação desligada: sem bloco scoring em routing.json')
       return
     }
-    console.log(['agente', 'pontos', 'capacidade', 'usd/M', 'usd na chamada', 'janela usada', 'situacao'].join('\t'))
+    console.log(['agente', 'pontos', 'capacidade', 'usd/M', 'usd na chamada', 'janela usada', 'situação'].join('\t'))
     for (const r of scored.ranking) {
       console.log(
         [
@@ -365,13 +365,13 @@ program
       const m = runtime.pricing.multiplierAt(p.provider, p.model, at)
       if (m !== 1) console.log(`nota: ${p.name} (${p.provider}/${p.model}) fora de pico ${at ? 'no instante simulado' : 'agora'}, custo x${m}`)
     }
-    if (ruled) console.log(`decisao final: ${ruled.agent} (regra vence a pontuacao)`)
-    else console.log(`decisao final: ${scored.chosen?.agent ?? runtime.repo.routing.default_agent ?? 'nenhum'}`)
+    if (ruled) console.log(`decisão final: ${ruled.agent} (regra vence a pontuação)`)
+    else console.log(`decisão final: ${scored.chosen?.agent ?? runtime.repo.routing.default_agent ?? 'nenhum'}`)
   })
 
 program
   .command('feedback')
-  .description('Somatorio de feedback bom/ruim por agente e intencao com o ajuste de capacidade aprendido')
+  .description('Somatório de feedback bom/ruim por agente e intenção com o ajuste de capacidade aprendido')
   .action(() => {
     const runtime = new Runtime(loadConfig())
     const rows = runtime.feedbackSummary()
@@ -379,7 +379,7 @@ program
       console.log('sem feedback registrado')
       return
     }
-    console.log(['agente', 'intencao', 'bom', 'ruim', 'ajuste'].join('	'))
+    console.log(['agente', 'intenção', 'bom', 'ruim', 'ajuste'].join('	'))
     for (const r of rows) console.log([r.agent, r.intent, r.good, r.bad, r.delta >= 0 ? `+${r.delta}` : `${r.delta}`].join('	'))
   })
 
@@ -390,16 +390,16 @@ program
     const runtime = new Runtime(loadConfig())
     const automation = new AutomationRunner(runtime, runtime.db, () => undefined)
     const scheduler = new Scheduler(runtime, runtime.db, automation, () => undefined)
-    console.log(`automacao ${scheduler.paused ? 'pausada' : 'ativa'}`)
+    console.log(`automação ${scheduler.paused ? 'pausada' : 'ativa'}`)
     for (const s of scheduler.list()) {
       const next = s.nextRunAt ? new Date(s.nextRunAt).toISOString() : 'nunca'
-      console.log(`${s.id}\t${s.enabled ? 'on' : 'off'}\t${s.cron ?? `at ${s.at}`}\t${s.agent}\t${s.mode}\tproximo ${next}\thoje ${s.todayUsd.toFixed(4)} USD`)
+      console.log(`${s.id}\t${s.enabled ? 'on' : 'off'}\t${s.cron ?? `at ${s.at}`}\t${s.agent}\t${s.mode}\tpróximo ${next}\thoje ${s.todayUsd.toFixed(4)} USD`)
     }
   })
 
 program
   .command('cost')
-  .description('Relatorio de custo do ledger')
+  .description('Relatório de custo do ledger')
   .option('-g, --group <group>', 'agent | model | session | day', 'agent')
   .option('-s, --since <period>', 'today | week | month | all', 'month')
   .action((opts: { group: string; since: string }) => {
@@ -408,7 +408,7 @@ program
     if (stale) console.error(`aviso: ${stale}`)
     const rows = runtime.ledger.report(opts.group as ReportGroup, { since: sinceOf(opts.since) })
     if (rows.length === 0) {
-      console.log('sem registros no periodo')
+      console.log('sem registros no período')
       return
     }
     console.log(['chave', 'usd', 'chamadas', 'input', 'output', 'cache_read'].join('\t'))
@@ -420,7 +420,7 @@ program
 
 program
   .command('senha')
-  .description('Define a senha do acesso remoto, lida da entrada padrao para nao ficar no historico do shell')
+  .description('Define a senha do acesso remoto, lida da entrada padrão para não ficar no histórico do shell')
   .action(async () => {
     const runtime = new Runtime(loadConfig())
     const { AuthStore } = await import('./auth.js')
@@ -428,33 +428,33 @@ program
     const pedacos: Buffer[] = []
     for await (const parte of process.stdin) pedacos.push(Buffer.from(parte as Buffer))
     const senha = Buffer.concat(pedacos).toString('utf8').trim()
-    if (!senha) throw new Error('nada na entrada padrao: use  echo -n "sua senha" | agent-hub-daemon senha')
+    if (!senha) throw new Error('nada na entrada padrão: use  echo -n "sua senha" | agent-hub-daemon senha')
     auth.definirSenha(senha)
-    console.log('senha definida. Dispositivos de fora entram com ela e recebem credencial propria.')
+    console.log('senha definida. Dispositivos de fora entram com ela e recebem credencial própria.')
   })
 program
   .command('chat')
   .description('Conversa interativa com um agente, aprovando ferramentas pelo terminal')
   .option('-a, --agent <name>', 'perfil do agente; sem ele, o roteamento por regra decide pela primeira mensagem')
-  .requiredOption('-w, --workspace <dir>', 'diretorio permitido')
-  .option('-s, --session <id>', 'continuar sessao existente')
+  .requiredOption('-w, --workspace <dir>', 'diretório permitido')
+  .option('-s, --session <id>', 'continuar sessão existente')
   .action(async (opts: { agent?: string; workspace: string; session?: string }) => {
     const runtime = new Runtime(loadConfig())
     reportErrors(runtime)
     const workspace = runtime.assertWorkspace(opts.workspace)
     const rl = createInterface({ input: process.stdin, output: process.stdout })
     let session = opts.session ? runtime.store.get(opts.session) : undefined
-    if (opts.session && !session) throw new Error('sessao nao encontrada')
+    if (opts.session && !session) throw new Error('sessão não encontrada')
     let pending: string | undefined
     if (!session) {
-      if (!opts.agent) pending = (await rl.question('\nvoce> ')).trim()
+      if (!opts.agent) pending = (await rl.question('\nvocê> ')).trim()
       const { agent, routed } = await runtime.resolveAgent(opts.agent, pending ?? '', workspace)
-      if (routed) console.log(`[roteamento] intencao ${routed.intent ?? 'nenhuma'} escolheu ${agent}`)
+      if (routed) console.log(`[roteamento] intenção ${routed.intent ?? 'nenhuma'} escolheu ${agent}`)
       session = runtime.store.create(agent, workspace)
     }
-    console.log(`sessao ${session.id} com ${session.agent} em ${session.workspace}. Linha vazia encerra.`)
+    console.log(`sessão ${session.id} com ${session.agent} em ${session.workspace}. Linha vazia encerra.`)
     for (;;) {
-      const text = pending ?? (await rl.question('\nvoce> ')).trim()
+      const text = pending ?? (await rl.question('\nvocê> ')).trim()
       pending = undefined
       if (text === '') break
       const result = await runtime.run({
@@ -487,19 +487,19 @@ function printEvent(e: RunEvent): void {
       )
       return
     case 'budget_warning':
-      console.log(`\n[aviso orcamento ${e.warning.scope}] ${e.warning.spentUsd.toFixed(4)} de ${e.warning.limitUsd.toFixed(4)} USD`)
+      console.log(`\n[aviso orçamento ${e.warning.scope}] ${e.warning.spentUsd.toFixed(4)} de ${e.warning.limitUsd.toFixed(4)} USD`)
       return
     case 'escalation':
       console.log(`\n[escalada] ${e.from} para ${e.to}: ${e.reason}`)
       return
     case 'verification':
-      console.log(`\n[verificacao de ${e.agent}] ${e.ok ? 'passou' : `falhou: ${e.failures.map((f) => f.reason).join('; ')}`}`)
+      console.log(`\n[verificação de ${e.agent}] ${e.ok ? 'passou' : `falhou: ${e.failures.map((f) => f.reason).join('; ')}`}`)
       return
     case 'max_output_retry':
-      console.log(`\n[teto estourado no raciocinio] ${e.reasoningTokens} tokens de pensamento sem resposta; repetindo com teto ${e.maxOutput} e esforco ${e.reasoning}`)
+      console.log(`\n[teto estourado no raciocínio] ${e.reasoningTokens} tokens de pensamento sem resposta; repetindo com teto ${e.maxOutput} e esforço ${e.reasoning}`)
       return
     case 'compaction':
-      console.log(`\n[compactacao ${e.mode}] ${e.before} para ${e.after} tokens estimados`)
+      console.log(`\n[compactação ${e.mode}] ${e.before} para ${e.after} tokens estimados`)
       return
     case 'tools_selected':
       console.log(`\n[ferramentas] ${e.kept} enviadas${e.reused ? ' (as mesmas da mensagem anterior)' : ''}, ${e.dropped} fora, ${e.tokens} tokens de ${e.budget} de teto`)
@@ -511,7 +511,7 @@ function printEvent(e: RunEvent): void {
       console.log(`\n[base de conhecimento] ${e.files} arquivos indexados em ${e.chunks} trechos${e.ignored.length ? `, ignorados: ${e.ignored.join(', ')}` : ''}`)
       return
     case 'workspace_context':
-      console.log(`\n[contexto do projeto] ${e.tokens} tokens: ${[...e.instructions, ...e.memories].join(', ') || 'nada'}${e.inHistory.length ? `; ja na conversa: ${e.inHistory.join(', ')}` : ''}`)
+      console.log(`\n[contexto do projeto] ${e.tokens} tokens: ${[...e.instructions, ...e.memories].join(', ') || 'nada'}${e.inHistory.length ? `; já na conversa: ${e.inHistory.join(', ')}` : ''}`)
       return
     case 'skills_loaded':
       console.log(`\n[skills] ${e.names.join(', ')}`)

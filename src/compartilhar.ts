@@ -50,7 +50,7 @@ export function codificarConvite(convite: Convite): string {
 
 export function lerConvite(texto: string): Convite {
   const limpo = texto.trim()
-  if (!limpo.startsWith(prefixoDoConvite)) throw new Error(`convite invalido: ele comeca com ${prefixoDoConvite}`)
+  if (!limpo.startsWith(prefixoDoConvite)) throw new Error(`convite inválido: ele começa com ${prefixoDoConvite}`)
   let dados: unknown
   try {
     dados = JSON.parse(Buffer.from(limpo.slice(prefixoDoConvite.length), 'base64url').toString('utf8'))
@@ -180,10 +180,10 @@ export class Anfitriao {
 
   criar(nome: string, modelos: string[], limiteTokensDia: number, janela: number): { convite: string; convidado: ConvidadoResumo } {
     if (!this.o.relayUrl) throw new Error('configure relay_url no config.toml: o compartilhamento passa pelo relay')
-    if (!nome.trim()) throw new Error('de um nome ao convidado')
+    if (!nome.trim()) throw new Error('dê um nome ao convidado')
     if (modelos.length === 0) throw new Error('escolha pelo menos um modelo')
-    if (!Number.isInteger(limiteTokensDia) || limiteTokensDia <= 0) throw new Error('limite diario de tokens invalido')
-    if (!Number.isInteger(janela) || janela < 1024) throw new Error('janela invalida')
+    if (!Number.isInteger(limiteTokensDia) || limiteTokensDia <= 0) throw new Error('limite diário de tokens inválido')
+    if (!Number.isInteger(janela) || janela < 1024) throw new Error('janela inválida')
     const row: ConvidadoRow = {
       id: randomUUID().slice(0, 12),
       nome: nome.trim(),
@@ -213,7 +213,7 @@ export class Anfitriao {
 
   revogar(id: string): void {
     const mudou = this.o.db.prepare('UPDATE convidados SET revogado_em = ? WHERE id = ? AND revogado_em IS NULL').run(Date.now(), id).changes
-    if (mudou === 0) throw new Error('convite nao encontrado ou ja revogado')
+    if (mudou === 0) throw new Error('convite não encontrado ou já revogado')
     this.salas.get(id)?.parar()
     this.salas.delete(id)
   }
@@ -322,7 +322,7 @@ class SalaAnfitriao {
 
   private async receber(msg: RelayToDaemon): Promise<void> {
     if (msg.t === 'ping') return this.enviarBruto({ t: 'pong' })
-    if (msg.t === 'trigger') return this.enviarBruto({ t: 'trigger_result', id: msg.id, accepted: false, reason: 'sala de compartilhamento nao recebe gatilhos' })
+    if (msg.t === 'trigger') return this.enviarBruto({ t: 'trigger_result', id: msg.id, accepted: false, reason: 'sala de compartilhamento não recebe gatilhos' })
     if (msg.t !== 'frame' || !this.chave || !isSealed(msg.frame)) return
     let pedido: ParaAnfitriao
     try {
@@ -342,20 +342,20 @@ class SalaAnfitriao {
       return this.responderJson(ch, pedido.id, 200, { object: 'list', data: [...this.modelos].map((id) => ({ id, object: 'model', owned_by: this.nomeDispositivo })) })
     }
     if (pedido.metodo !== 'POST' || pedido.caminho !== '/v1/chat/completions') {
-      return this.responderErro(ch, pedido.id, 404, 'caminho nao liberado no compartilhamento: so /v1/chat/completions e /v1/models')
+      return this.responderErro(ch, pedido.id, 404, 'caminho não liberado no compartilhamento: só /v1/chat/completions e /v1/models')
     }
-    if (this.emAndamento.size > 0) return this.responderErro(ch, pedido.id, 429, 'ja ha um pedido deste convite em andamento; tente de novo em instantes')
+    if (this.emAndamento.size > 0) return this.responderErro(ch, pedido.id, 429, 'já há um pedido deste convite em andamento; tente de novo em instantes')
     if (this.anfitriao.usoHoje(this.row.id) >= this.row.limite_tokens_dia) {
-      return this.responderErro(ch, pedido.id, 429, `limite diario de ${this.row.limite_tokens_dia} tokens deste convite atingido`)
+      return this.responderErro(ch, pedido.id, 429, `limite diário de ${this.row.limite_tokens_dia} tokens deste convite atingido`)
     }
     let corpo: Record<string, unknown>
     try {
       corpo = JSON.parse(pedido.corpo ?? '{}') as Record<string, unknown>
     } catch {
-      return this.responderErro(ch, pedido.id, 400, 'corpo do pedido nao e JSON')
+      return this.responderErro(ch, pedido.id, 400, 'corpo do pedido não é JSON')
     }
     const modelo = String(corpo.model ?? '')
-    if (!this.modelos.has(modelo)) return this.responderErro(ch, pedido.id, 403, `modelo ${modelo} nao foi compartilhado neste convite`)
+    if (!this.modelos.has(modelo)) return this.responderErro(ch, pedido.id, 403, `modelo ${modelo} não foi compartilhado neste convite`)
     const pedidoMax = typeof corpo.max_tokens === 'number' ? corpo.max_tokens : tetoDeSaida
     corpo.max_tokens = Math.min(pedidoMax, tetoDeSaida)
     delete corpo.max_completion_tokens
@@ -386,7 +386,7 @@ class SalaAnfitriao {
       }
       this.enviar(ch, { type: 'inferencia.fim', id: pedido.id })
     } catch (err) {
-      if (status === 502) this.responderErro(ch, pedido.id, 502, `o Ollama de ${this.nomeDispositivo} nao respondeu: ${err instanceof Error ? err.message : String(err)}`)
+      if (status === 502) this.responderErro(ch, pedido.id, 502, `o Ollama de ${this.nomeDispositivo} não respondeu: ${err instanceof Error ? err.message : String(err)}`)
       else this.enviar(ch, { type: 'inferencia.fim', id: pedido.id })
     } finally {
       this.emAndamento.delete(pedido.id)
@@ -458,7 +458,7 @@ export class Convidados {
   }
 
   remover(id: string): void {
-    if (this.o.db.prepare('DELETE FROM recebidos WHERE id = ?').run(id).changes === 0) throw new Error('convite recebido nao encontrado')
+    if (this.o.db.prepare('DELETE FROM recebidos WHERE id = ?').run(id).changes === 0) throw new Error('convite recebido não encontrado')
     this.conexoes.get(id)?.fechar()
     this.conexoes.delete(id)
   }
@@ -493,12 +493,12 @@ export class Convidados {
         pedaco: (d) => (corpo += d),
         fim: () => {
           const ms = Date.now() - inicio
-          if (status !== 200) return resolve({ ok: false, detalhe: `anfitriao respondeu ${status}: ${corpo.slice(0, 200)}`, ms })
+          if (status !== 200) return resolve({ ok: false, detalhe: `anfitrião respondeu ${status}: ${corpo.slice(0, 200)}`, ms })
           try {
             const nomes = ((JSON.parse(corpo) as { data?: { id: string }[] }).data ?? []).map((m) => m.id)
             resolve({ ok: true, detalhe: `conectado; modelos liberados: ${nomes.join(', ')}`, ms })
           } catch {
-            resolve({ ok: false, detalhe: `resposta ilegivel do anfitriao: ${corpo.slice(0, 200)}`, ms })
+            resolve({ ok: false, detalhe: `resposta ilegível do anfitrião: ${corpo.slice(0, 200)}`, ms })
           }
         },
         erro: (mensagem) => resolve({ ok: false, detalhe: mensagem, ms: Date.now() - inicio }),
@@ -510,7 +510,7 @@ export class Convidados {
   encaminhar(id: string, metodo: 'GET' | 'POST', caminho: string, corpo: string | undefined, eventos: EventosDoPedido): () => void {
     const row = this.rows().find((r) => r.id === id)
     if (!row) {
-      eventos.erro('convite recebido nao encontrado')
+      eventos.erro('convite recebido não encontrado')
       return () => undefined
     }
     let conexao = this.conexoes.get(id)
@@ -542,7 +542,7 @@ class ConexaoConvidado {
         rejeitar(err)
         this.fechar()
       }
-      const prazo = setTimeout(() => reject(new Error(`${anfitriao} nao respondeu pelo relay em 10 s`)), 10_000)
+      const prazo = setTimeout(() => reject(new Error(`${anfitriao} não respondeu pelo relay em 10 s`)), 10_000)
       const chave = deriveE2eKey(sala)
       this.socket.on('open', () => this.socket.send(JSON.stringify({ type: 'relay.auth', account_token: sala, client: 'agent-hub-convidado' })))
       this.socket.on('message', (raw) => {
@@ -560,7 +560,7 @@ class ConexaoConvidado {
         const quadro = msg as { type: string; devices?: { id: string }[]; message?: string; reason?: string }
         if (quadro.type === 'relay.devices') {
           if (quadro.devices?.some((d) => d.id === dispositivo)) this.socket.send(JSON.stringify({ type: 'relay.attach', device_id: dispositivo }))
-          else reject(new Error(`${anfitriao} nao esta disponivel: o daemon dele esta desligado ou o convite foi revogado`))
+          else reject(new Error(`${anfitriao} não está disponível: o daemon dele está desligado ou o convite foi revogado`))
           return
         }
         if (quadro.type === 'relay.attached') {
@@ -571,17 +571,17 @@ class ConexaoConvidado {
         if (quadro.type === 'relay.error' || quadro.type === 'relay.detached') {
           const motivo = quadro.message ?? quadro.reason ?? 'relay recusou'
           reject(new Error(motivo))
-          this.falharTudo(`conexao com ${anfitriao} caiu: ${motivo}`)
+          this.falharTudo(`conexão com ${anfitriao} caiu: ${motivo}`)
         }
       })
       this.socket.on('error', (err) => {
         reject(err)
-        this.falharTudo(`relay inacessivel: ${err.message}`)
+        this.falharTudo(`relay inacessível: ${err.message}`)
       })
       this.socket.on('close', () => {
         this.fechada = true
-        reject(new Error('conexao com o relay fechada'))
-        this.falharTudo(`conexao com ${anfitriao} fechada`)
+        reject(new Error('conexão com o relay fechada'))
+        this.falharTudo(`conexão com ${anfitriao} fechada`)
       })
     })
     this.pronta.catch(() => (this.fechada = true))
@@ -644,7 +644,7 @@ function perfilCompartilhado(r: RecebidoRow, modelo: { nome: string; janela: num
   const texto = [
     '---',
     `name: ${nomeDoAgente(r.anfitriao, modelo.nome)}`,
-    `description: ${JSON.stringify(`Modelo ${modelo.nome} compartilhado por ${r.anfitriao}; roda na maquina de quem compartilhou, pelo relay`)}`,
+    `description: ${JSON.stringify(`Modelo ${modelo.nome} compartilhado por ${r.anfitriao}; roda na máquina de quem compartilhou, pelo relay`)}`,
     'provider: ollama',
     `model: ${JSON.stringify(modelo.nome)}`,
     'reasoning: low',
@@ -682,7 +682,7 @@ function perfilCompartilhado(r: RecebidoRow, modelo: { nome: string; janela: num
 /** Endereco local no formato da OpenAI que o adaptador do agente compartilhado usa; so a propria maquina chama. */
 export function registrarRotasDeCompartilhamento(app: FastifyInstance, convidados: Convidados, local: (ip: string) => boolean): void {
   const atender = (metodo: 'GET' | 'POST', caminho: string) => async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    if (!local(req.ip)) return reply.code(403).send({ error: { message: 'so a propria maquina usa o compartilhamento' } })
+    if (!local(req.ip)) return reply.code(403).send({ error: { message: 'só a própria máquina usa o compartilhamento' } })
     reply.hijack()
     const raw = reply.raw
     let comecou = false

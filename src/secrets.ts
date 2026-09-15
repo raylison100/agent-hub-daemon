@@ -48,7 +48,7 @@ export class SecretStore {
   }
 
   set(name: string, value: string): void {
-    if (!nameRule.test(name)) throw new Error('nome invalido: use MAIUSCULAS, digitos e sublinhado')
+    if (!nameRule.test(name)) throw new Error('nome inválido: use MAIÚSCULAS, dígitos e sublinhado')
     if (value.trim() === '') throw new Error('valor vazio')
     const iv = randomBytes(12)
     const cipher = createCipheriv('aes-256-gcm', this.key, iv)

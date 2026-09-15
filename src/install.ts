@@ -38,7 +38,7 @@ export async function checkNative(): Promise<StepResult> {
   return {
     ok: false,
     detail:
-      `modulos nativos nao carregam (${falhas.join('; ')}). Instale as ferramentas de compilacao ` +
+      `módulos nativos não carregam (${falhas.join('; ')}). Instale as ferramentas de compilação ` +
       '(no Ubuntu: sudo apt install -y build-essential python3) e reinstale o pacote.',
   }
 }
@@ -71,7 +71,7 @@ export function ensureConfig(home: string): StepResult {
 /** Copia o modelo de agentes para a pasta configurada quando ela ainda nao existe; nunca mistura com uma existente. */
 export function ensureAgents(agentsDir: string, template: string | undefined): StepResult {
   if (existsSync(agentsDir) && readdirSync(agentsDir).length > 0) return { ok: true, detail: `mantido ${agentsDir}` }
-  if (!template) return { ok: false, detail: 'modelo de agentes nao encontrado no pacote' }
+  if (!template) return { ok: false, detail: 'modelo de agentes não encontrado no pacote' }
   mkdirSync(agentsDir, { recursive: true })
   for (const item of readdirSync(template)) {
     if (foraDoModelo.has(item)) continue
@@ -126,7 +126,7 @@ export function serviceTarget(): string | undefined {
 
 /** Grava a unidade, recarrega o systemd, habilita, reinicia e liga o linger. */
 export function installService(home: string): StepResult {
-  if (!systemdAvailable()) return { ok: false, detail: 'systemd de usuario indisponivel; rode "agent-hub start" em segundo plano ou habilite o systemd (no WSL, em /etc/wsl.conf)' }
+  if (!systemdAvailable()) return { ok: false, detail: 'systemd de usuário indisponível; rode "agent-hub start" em segundo plano ou habilite o systemd (no WSL, em /etc/wsl.conf)' }
   const file = unitPath()
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, serviceUnit(process.execPath, currentCli(), home, process.env.AGENT_HUB_HOME))
@@ -135,7 +135,7 @@ export function installService(home: string): StepResult {
     if (r.status !== 0) return { ok: false, detail: `systemctl ${args.join(' ')} falhou: ${(r.stderr || r.stdout).trim()}` }
   }
   const linger = spawnSync('loginctl', ['enable-linger', userInfo().username], { stdio: 'ignore' })
-  return { ok: true, detail: `servico ${serviceName} ativo${linger.status === 0 ? ' e sobe com a maquina' : '; sem linger, so sobe quando voce abre uma sessao'}` }
+  return { ok: true, detail: `serviço ${serviceName} ativo${linger.status === 0 ? ' e sobe com a máquina' : '; sem linger, só sobe quando você abre uma sessão'}` }
 }
 
 /** Espera o daemon responder em /health. */

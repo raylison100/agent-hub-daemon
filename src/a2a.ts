@@ -26,7 +26,7 @@ export function registerA2A(app: FastifyInstance, runtime: Runtime, hub: Connect
     return reply.send({
       protocolVersion: '0.3.0',
       name: `Agent Hub em ${runtime.config.deviceName}`,
-      description: 'Harness multi-provedor com roteamento por custo e capacidade. Cada skill abaixo e um agente configurado.',
+      description: 'Harness multi-provedor com roteamento por custo e capacidade. Cada skill abaixo é um agente configurado.',
       url: `${base}/a2a`,
       preferredTransport: 'JSONRPC',
       version: '0.1.0',
@@ -48,13 +48,13 @@ export function registerA2A(app: FastifyInstance, runtime: Runtime, hub: Connect
 
   app.post('/a2a', async (req, reply) => {
     const auth = req.headers.authorization
-    if (auth !== `Bearer ${token}`) return reply.code(401).send({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'token invalido' } })
+    if (auth !== `Bearer ${token}`) return reply.code(401).send({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'token inválido' } })
     const body = req.body as { id?: string | number; method?: string; params?: Record<string, unknown> }
     const id = body.id ?? null
     try {
       if (body.method === 'message/send') return reply.send({ jsonrpc: '2.0', id, result: await enviar(body.params ?? {}) })
       if (body.method === 'tasks/get') return reply.send({ jsonrpc: '2.0', id, result: consultar(body.params ?? {}) })
-      return reply.send({ jsonrpc: '2.0', id, error: { code: -32601, message: `metodo nao suportado: ${body.method}` } })
+      return reply.send({ jsonrpc: '2.0', id, error: { code: -32601, message: `método não suportado: ${body.method}` } })
     } catch (err) {
       return reply.send({ jsonrpc: '2.0', id, error: { code: -32603, message: err instanceof Error ? err.message : String(err) } })
     }

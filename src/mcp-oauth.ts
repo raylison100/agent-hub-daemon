@@ -40,7 +40,7 @@ export class McpOAuth {
   /** Fecha o ciclo: troca o codigo pelo token e guarda no cofre. */
   async finish(state: string, code: string, redirectUri: string): Promise<string> {
     const pendente = this.pendentes.get(state)
-    if (!pendente) throw new Error('autorizacao desconhecida ou ja usada')
+    if (!pendente) throw new Error('autorização desconhecida ou já usada')
     this.pendentes.delete(state)
     const tokens = await exchange(pendente.cfg, { code, verifier: pendente.verifier, redirectUri })
     this.guardar(pendente.server, tokens)
@@ -71,9 +71,9 @@ export class McpOAuth {
 
   private config(server: string): McpServerConfig {
     const config = this.runtime.repo.mcp.servers[server]
-    if (!config) throw new Error(`servidor MCP nao configurado: ${server}`)
-    if (!config.url) throw new Error('OAuth so vale para servidor MCP por HTTP')
-    if (!config.oauth) throw new Error(`servidor ${server} nao declara o bloco oauth em mcp.json`)
+    if (!config) throw new Error(`servidor MCP não configurado: ${server}`)
+    if (!config.url) throw new Error('OAuth só vale para servidor MCP por HTTP')
+    if (!config.oauth) throw new Error(`servidor ${server} não declara o bloco oauth em mcp.json`)
     return config
   }
 
@@ -86,7 +86,7 @@ export class McpOAuth {
       const registrado = await registerClient(cfg.register_url, redirectUri)
       cfg = { ...cfg, ...registrado }
     }
-    if (!cfg.authorization_url || !cfg.token_url) throw new Error('faltam authorization_url e token_url, e nao deu para descobrir pelo issuer')
+    if (!cfg.authorization_url || !cfg.token_url) throw new Error('faltam authorization_url e token_url, e não deu para descobrir pelo issuer')
     return cfg
   }
 

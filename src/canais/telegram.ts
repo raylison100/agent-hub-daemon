@@ -159,12 +159,12 @@ class TransporteTelegram implements Transporte {
 export const telegram: TipoDeCanal = {
   id: 'telegram',
   nome: 'Telegram',
-  descricao: 'Bot gratuito do Telegram. Converse com os agentes, receba as respostas das automacoes e aprove ferramentas pelo celular.',
+  descricao: 'Bot gratuito do Telegram. Converse com os agentes, receba as respostas das automações e aprove ferramentas pelo celular.',
   passos: [
     'No Telegram, abra uma conversa com @BotFather e envie /newbot.',
-    'Escolha um nome e um usuario terminado em "bot". O BotFather responde com o token do bot.',
+    'Escolha um nome e um usuário terminado em "bot". O BotFather responde com o token do bot.',
     'Cole o token abaixo e salve. O Agent Hub confere o token e mostra o nome do bot.',
-    'Ligue o canal, abra o bot pelo link que aparece ao lado da conta e mande qualquer mensagem. Voce aparece em "Pediram acesso": clique em Permitir.',
+    'Ligue o canal, abra o bot pelo link que aparece ao lado da conta e mande qualquer mensagem. Você aparece em "Pediram acesso": clique em Permitir.',
     'Com a pessoa permitida, use "Enviar mensagem de teste" para conferir.',
   ],
   campos: [{ chave: 'token', rotulo: 'Token do bot', segredo: true, obrigatorio: true, exemplo: '123456789:AA...' }],

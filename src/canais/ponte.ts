@@ -59,14 +59,14 @@ interface RunEmCurso {
 
 const ajuda = [
   'Comandos:',
-  '/workspace <dir>  define o diretorio da proxima sessao',
-  '/agente <nome>    fixa o agente da proxima sessao (vazio = roteamento)',
-  '/nova             comeca uma sessao nova na proxima mensagem',
-  '/sessoes          ultimas sessoes',
+  '/workspace <dir>  define o diretório da próxima sessão',
+  '/agente <nome>    fixa o agente da próxima sessão (vazio = roteamento)',
+  '/nova             começa uma sessão nova na próxima mensagem',
+  '/sessoes          últimas sessões',
   '/custo            custo de hoje por agente',
   '/cancelar         cancela o run atual',
-  '/aprovar <codigo> e /negar <codigo>  respondem a um pedido de aprovacao',
-  '/status           conexao com o daemon',
+  '/aprovar <código> e /negar <código>  respondem a um pedido de aprovação',
+  '/status           conexão com o daemon',
 ].join('\n')
 
 /** Liga um canal de conversa ao daemon: sessoes por conversa, comandos, aprovacoes e respostas das automacoes. */
@@ -122,7 +122,7 @@ export class PonteDeCanal {
         try {
           ids.push(...(await this.transporte.enviarImagem(conversa, imagem)))
         } catch (err) {
-          await this.transporte.enviar(conversa, `Nao consegui enviar ${imagem.nome}: ${descrever(err)}`)
+          await this.transporte.enviar(conversa, `Não consegui enviar ${imagem.nome}: ${descrever(err)}`)
         }
       }
     }
@@ -188,7 +188,7 @@ export class PonteDeCanal {
       )
       sessionId = criada.session.id
       this.salvarConversa(m.conversa, { ...estado, sessionId })
-      await this.transporte.enviar(m.conversa, `Sessao nova com ${criada.session.agent}${criada.routed ? ` (roteado por ${criada.routed.intent ?? 'regra'})` : ''}.`)
+      await this.transporte.enviar(m.conversa, `Sessão nova com ${criada.session.agent}${criada.routed ? ` (roteado por ${criada.routed.intent ?? 'regra'})` : ''}.`)
     }
     this.conversaDaSessao.set(sessionId, m.conversa)
     const iniciado = await this.daemon.request({ type: 'run.start', session_id: sessionId, text: texto }, 'run.started')
@@ -202,7 +202,7 @@ export class PonteDeCanal {
     })
     if (jaPediu) return
     const quem = m.remetente.nome ?? m.remetente.usuario ?? m.remetente.id
-    await this.transporte.enviar(m.conversa, `Este bot e privado. Pedido de acesso registrado para ${quem} (id ${m.remetente.id}). Quem administra o Agent Hub libera em Configuracoes > Canais.`)
+    await this.transporte.enviar(m.conversa, `Este bot é privado. Pedido de acesso registrado para ${quem} (id ${m.remetente.id}). Quem administra o Agent Hub libera em Configurações > Canais.`)
   }
 
   private async comando(conversa: string, texto: string): Promise<void> {
@@ -216,7 +216,7 @@ export class PonteDeCanal {
         return
       case '/workspace':
         this.salvarConversa(conversa, { ...estado, workspace: arg || undefined, sessionId: undefined })
-        await this.transporte.enviar(conversa, arg ? `Workspace: ${arg}` : `Workspace padrao: ${this.deps.config().padrao.workspace ?? this.deps.workspacePadrao}`)
+        await this.transporte.enviar(conversa, arg ? `Workspace: ${arg}` : `Workspace padrão: ${this.deps.config().padrao.workspace ?? this.deps.workspacePadrao}`)
         return
       case '/agente':
         this.salvarConversa(conversa, { ...estado, agent: arg || undefined, sessionId: undefined })
@@ -224,11 +224,11 @@ export class PonteDeCanal {
         return
       case '/nova':
         this.salvarConversa(conversa, { ...estado, sessionId: undefined })
-        await this.transporte.enviar(conversa, 'A proxima mensagem abre uma sessao nova.')
+        await this.transporte.enviar(conversa, 'A próxima mensagem abre uma sessão nova.')
         return
       case '/sessoes': {
         const res = await this.daemon.request({ type: 'session.list', limit: 5 }, 'session.list')
-        await this.transporte.enviar(conversa, res.sessions.map((s) => `${s.title} (${s.agent}, ${s.costUsd.toFixed(4)} USD)`).join('\n') || 'Nenhuma sessao.')
+        await this.transporte.enviar(conversa, res.sessions.map((s) => `${s.title} (${s.agent}, ${s.costUsd.toFixed(4)} USD)`).join('\n') || 'Nenhuma sessão.')
         return
       }
       case '/custo': {
@@ -249,7 +249,7 @@ export class PonteDeCanal {
       case '/negar': {
         const id = this.aprovacoes.get(arg.toLowerCase())
         if (!id) {
-          await this.transporte.enviar(conversa, 'Codigo de aprovacao desconhecido ou expirado.')
+          await this.transporte.enviar(conversa, 'Código de aprovação desconhecido ou expirado.')
           return
         }
         this.daemon.send({ type: 'approval.respond', approval_id: id, decision: cmd === '/aprovar' ? 'allow' : 'deny' })
@@ -308,16 +308,16 @@ export class PonteDeCanal {
       if (f.stop === 'end' && f.text?.trimStart().startsWith('[sem-aviso]')) return
       const conversa = this.conversaPadrao()
       if (!conversa) {
-        this.deps.log(`automacao ${f.id} terminou, mas nenhuma pessoa permitida falou com o bot ainda`)
+        this.deps.log(`automação ${f.id} terminou, mas nenhuma pessoa permitida falou com o bot ainda`)
         return
       }
-      const status = `Automacao ${f.id} terminou com ${f.stop} (${f.cost_usd.toFixed(4)} USD).`
+      const status = `Automação ${f.id} terminou com ${f.stop} (${f.cost_usd.toFixed(4)} USD).`
       if (f.text) {
         const estado = this.deps.config().conversas[conversa] ?? {}
         this.salvarConversa(conversa, { ...estado, sessionId: f.session_id, workspace: f.workspace ?? estado.workspace })
         this.conversaDaSessao.set(f.session_id, conversa)
       }
-      const corpo = f.text ? `${f.text}\n\n[${status} Responda aqui para continuar essa sessao; /nova volta ao normal.]` : status
+      const corpo = f.text ? `${f.text}\n\n[${status} Responda aqui para continuar essa sessão; /nova volta ao normal.]` : status
       void this.responder(conversa, corpo, f.workspace ?? this.workspaceDa(conversa), f.session_id).catch((err: unknown) => this.deps.log(descrever(err)))
     }
   }

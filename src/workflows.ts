@@ -75,7 +75,7 @@ export class WorkflowEngine {
   async run(req: WorkflowRunRequest): Promise<WorkflowOutcome> {
     const wf = this.runtime.repo.workflows.get(req.name)
     if (!wf) throw new Error(`workflow desconhecido: ${req.name}`)
-    for (const input of wf.inputs) if (!(input in req.inputs)) throw new Error(`entrada obrigatoria ausente: ${input}`)
+    for (const input of wf.inputs) if (!(input in req.inputs)) throw new Error(`entrada obrigatória ausente: ${input}`)
     const workspace = this.runtime.assertWorkspace(req.workspace)
     const firstAgent = wf.steps.find((s) => isAgentStep(s)) as AgentStep | undefined
     const session = this.runtime.store.create(firstAgent?.agent ?? 'workflow', workspace, `[workflow] ${wf.name}`, 'workflow')
@@ -91,11 +91,11 @@ export class WorkflowEngine {
   async resume(runId: string): Promise<WorkflowOutcome> {
     const row = this.estado(runId)
     if (!row) throw new Error(`run de workflow desconhecido: ${runId}`)
-    if (row.status === 'concluido') throw new Error('esse workflow ja terminou')
+    if (row.status === 'concluido') throw new Error('esse workflow já terminou')
     const wf = this.runtime.repo.workflows.get(row.name)
     if (!wf) throw new Error(`workflow desconhecido: ${row.name}`)
     const index = row.nextStep ? wf.steps.findIndex((s) => s.id === row.nextStep) : 0
-    if (index < 0) throw new Error(`a etapa ${row.nextStep} nao existe mais em ${row.name}`)
+    if (index < 0) throw new Error(`a etapa ${row.nextStep} não existe mais em ${row.name}`)
     this.broadcast({ type: 'workflow.started', name: wf.name, session_id: row.sessionId, run_id: runId, max_cost_usd: maxWorkflowCost(wf, this.runtime.repo.profiles) })
     this.broadcast({ type: 'workflow.step', session_id: row.sessionId, run_id: runId, step: row.nextStep ?? wf.steps[0]!.id, status: 'running', detail: 'retomando daqui' })
     return this.execute(wf, row.sessionId, runId, row.workspace, row.context, index, row.costUsd)
@@ -126,7 +126,7 @@ export class WorkflowEngine {
       while (index < wf.steps.length) {
         const step = wf.steps[index]!
         if (wf.budget_usd !== undefined && costUsd >= wf.budget_usd) {
-          return this.finish(wf, sessionId, runId, { status: 'budget_exceeded', costUsd, outputs: context, error: `orcamento do workflow esgotado: ${costUsd.toFixed(4)} USD` }, step.id)
+          return this.finish(wf, sessionId, runId, { status: 'budget_exceeded', costUsd, outputs: context, error: `orçamento do workflow esgotado: ${costUsd.toFixed(4)} USD` }, step.id)
         }
         const started = Date.now()
         this.broadcast({ type: 'workflow.step', session_id: sessionId, run_id: runId, step: step.id, status: 'running' })
@@ -234,7 +234,7 @@ export class WorkflowEngine {
     if (!validated.ok) throw new Error(validated.error)
     const policy = mode === 'draft' ? draftPolicy : this.runtime.policyFor(this.runtime.repo.profiles.values().next().value!)
     const decision = decide(policy, tool.definition, validated.args)
-    if (decision === 'deny') throw new Error(`ferramenta ${step.tool} negada pela politica`)
+    if (decision === 'deny') throw new Error(`ferramenta ${step.tool} negada pela política`)
     if (decision === 'ask') {
       const answer = await this.runtime.requestApproval(sessionId, runId, tool.definition, validated.args, (info) =>
         this.broadcast({
@@ -248,7 +248,7 @@ export class WorkflowEngine {
           expires_at: info.expiresAt,
         }),
       )
-      if (answer === 'deny') throw new Error(`ferramenta ${step.tool} negada pelo usuario`)
+      if (answer === 'deny') throw new Error(`ferramenta ${step.tool} negada pelo usuário`)
     }
     const output = this.runtime.redactor.redact(await tool.handler(validated.args, { workspace }))
     this.runtime.store.recordToolEvent({ sessionId, runId, name: step.tool, args: validated.args, decision: 'workflow', result: output.slice(0, 4000) })
@@ -259,7 +259,7 @@ export class WorkflowEngine {
   private async runGate(step: GateStep, context: Record<string, unknown>, sessionId: string, runId: string): Promise<StepResult> {
     const passou = evaluateCondition(step.gate, context as StepResult)
     if (passou) return { output: `portao ${step.gate}: ok`, cost_usd: 0, passed: true }
-    const pergunta = step.question ? renderTemplate(step.question, context) : `A condicao ${step.gate} nao foi atendida.`
+    const pergunta = step.question ? renderTemplate(step.question, context) : `A condição ${step.gate} não foi atendida.`
     if (step.on_fail === 'stop') return { output: pergunta, cost_usd: 0, passed: false, escalated: true }
     const decision = await this.runtime.requestApproval(sessionId, runId, escalarTool, { pergunta, condicao: step.gate }, (info) =>
       this.broadcast({
@@ -273,8 +273,8 @@ export class WorkflowEngine {
         expires_at: info.expiresAt,
       }),
     )
-    if (decision === 'allow') return { output: `${pergunta} Voce autorizou seguir.`, cost_usd: 0, passed: false, approved: true }
-    return { output: `${pergunta} Sem autorizacao para seguir.`, cost_usd: 0, passed: false, escalated: true }
+    if (decision === 'allow') return { output: `${pergunta} Você autorizou seguir.`, cost_usd: 0, passed: false, approved: true }
+    return { output: `${pergunta} Sem autorização para seguir.`, cost_usd: 0, passed: false, escalated: true }
   }
 
   private async runAgent(step: AgentStep, context: Record<string, unknown>, sessionId: string, runId: string, mode: 'draft' | 'normal'): Promise<StepResult> {
@@ -317,9 +317,9 @@ export class WorkflowEngine {
       const parsed = parseJson(result.text)
       const validate = ajv.compile(step.output_schema)
       if (parsed !== undefined && validate(parsed)) return { ...(parsed as Record<string, unknown>), output: result.text, cost_usd: costUsd }
-      lastError = parsed === undefined ? 'nao e JSON' : (validate.errors ?? []).map((e) => `${e.instancePath} ${e.message}`).join('; ')
+      lastError = parsed === undefined ? 'não é JSON' : (validate.errors ?? []).map((e) => `${e.instancePath} ${e.message}`).join('; ')
     }
-    throw new StepError(`saida nao atende ao schema: ${lastError}`, costUsd)
+    throw new StepError(`saída não atende ao schema: ${lastError}`, costUsd)
   }
 }
 

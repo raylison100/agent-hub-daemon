@@ -68,7 +68,7 @@ export function compararVersoes(a: string, b: string): number {
 /** Consulta a ultima Release publicada no GitHub. */
 export async function buscarUltimaVersao(fonte = `https://api.github.com/repos/${repositorio}/releases/latest`): Promise<UltimaVersao> {
   const resposta = await fetch(fonte, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'agent-hub' }, signal: AbortSignal.timeout(10_000) })
-  if (!resposta.ok) throw new Error(`GitHub respondeu ${resposta.status} ao consultar a ultima versao`)
+  if (!resposta.ok) throw new Error(`GitHub respondeu ${resposta.status} ao consultar a última versão`)
   const corpo = (await resposta.json()) as { tag_name?: string; published_at?: string; html_url?: string }
   if (!corpo.tag_name) throw new Error('a Release mais recente veio sem tag')
   return { versao: corpo.tag_name.replace(/^v/, ''), publicada_em: corpo.published_at ?? '', endereco: corpo.html_url ?? `https://github.com/${repositorio}/releases` }
@@ -158,17 +158,17 @@ export class Atualizacao {
   }
 
   private detalhe(atual: string, instalacao: 'pacote' | 'repositorio', supervisionado: boolean, disponivel: boolean, naoLancadas: { repositorio: string; commits: number }[]): string {
-    if (this.atualizando) return `baixando a versao ${this.ultima?.versao}; o daemon reinicia sozinho e a interface reconecta. Registro em ${join(this.opcoes.home, 'atualizacao.log')}`
-    if (this.erro && !this.ultima) return `nao foi possivel consultar a ultima versao: ${this.erro}`
-    if (!this.ultima) return 'ainda nao consultado'
+    if (this.atualizando) return `baixando a versão ${this.ultima?.versao}; o daemon reinicia sozinho e a interface reconecta. Registro em ${join(this.opcoes.home, 'atualizacao.log')}`
+    if (this.erro && !this.ultima) return `não foi possível consultar a última versão: ${this.erro}`
+    if (!this.ultima) return 'ainda não consultado'
     if (!disponivel && naoLancadas.length > 0) {
       const lista = naoLancadas.map((n) => `${n.repositorio} ${n.commits}`).join(', ')
-      return `este daemon roda do codigo, a frente da versao ${atual} (commits ainda nao lancados: ${lista}). O app de desktop e o pacote so recebem essas mudancas quando sair a proxima versao: make versao`
+      return `este daemon roda do código, à frente da versão ${atual} (commits ainda não lançados: ${lista}). O app de desktop e o pacote só recebem essas mudanças quando sair a próxima versão: make versao`
     }
-    if (!disponivel) return `versao ${atual} e a mais recente`
-    if (instalacao === 'repositorio') return `a versao ${this.ultima.versao} saiu; este daemon roda de um clone do repositorio, entao atualize com git pull e make build`
-    if (!supervisionado) return `a versao ${this.ultima.versao} saiu; o daemon nao roda pelo servico do systemd, entao atualize no terminal com: agent-hub atualizar ${enderecoDoPacote(this.ultima.versao)}`
-    return `a versao ${this.ultima.versao} saiu e pode ser instalada daqui`
+    if (!disponivel) return `versão ${atual} é a mais recente`
+    if (instalacao === 'repositorio') return `a versão ${this.ultima.versao} saiu; este daemon roda de um clone do repositório, então atualize com git pull e make build`
+    if (!supervisionado) return `a versão ${this.ultima.versao} saiu; o daemon não roda pelo serviço do systemd, então atualize no terminal com: agent-hub atualizar ${enderecoDoPacote(this.ultima.versao)}`
+    return `a versão ${this.ultima.versao} saiu e pode ser instalada daqui`
   }
 }
 

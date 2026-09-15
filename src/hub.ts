@@ -91,7 +91,7 @@ export class ConnectionHub {
     const send = (f: ServerFrame) => conn.send(f)
     if (frame.type === 'auth.login') {
       if (frame.protocol_version !== protocolVersion) {
-        send({ type: 'auth.error', message: `protocolo ${frame.protocol_version} incompativel com ${protocolVersion}` })
+        send({ type: 'auth.error', message: `protocolo ${frame.protocol_version} incompatível com ${protocolVersion}` })
         return
       }
       try {
@@ -112,12 +112,12 @@ export class ConnectionHub {
     }
     if (frame.type === 'auth') {
       if (frame.protocol_version !== protocolVersion) {
-        send({ type: 'auth.error', message: `protocolo ${frame.protocol_version} incompativel com ${protocolVersion}` })
+        send({ type: 'auth.error', message: `protocolo ${frame.protocol_version} incompatível com ${protocolVersion}` })
         return
       }
       const dispositivo = safeEqual(frame.token, this.token) ? null : runtime.auth.conferirDispositivo(frame.token)
       if (!safeEqual(frame.token, this.token) && dispositivo === null) {
-        send({ type: 'auth.error', message: 'token invalido' })
+        send({ type: 'auth.error', message: 'token inválido' })
         return
       }
       conn.authed = true
@@ -177,7 +177,7 @@ export class ConnectionHub {
         send({ type: 'auth.devices', devices: runtime.auth.dispositivos(), senha_definida: runtime.auth.temSenha() })
         return
       case 'auth.revoke':
-        if (!runtime.auth.revogar(frame.device_id)) throw new Error('dispositivo nao encontrado')
+        if (!runtime.auth.revogar(frame.device_id)) throw new Error('dispositivo não encontrado')
         send({ type: 'auth.devices', devices: runtime.auth.dispositivos(), senha_definida: runtime.auth.temSenha() })
         return
       case 'compartilhar.listar':
@@ -214,7 +214,7 @@ export class ConnectionHub {
       }
       case 'daemon.reload': {
         runtime.reload()
-        send({ type: 'daemon.status', supervisionado: supervisionado(), reiniciando: false, detalhe: 'configuracao recarregada: perfis, papeis, skills, precos, conectores e agendamentos' })
+        send({ type: 'daemon.status', supervisionado: supervisionado(), reiniciando: false, detalhe: 'configuração recarregada: perfis, papéis, skills, preços, conectores e agendamentos' })
         this.broadcast({ type: 'agents.list', agents: runtime.agents(), roles: runtime.roles(), errors: runtime.repo.errors })
         this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
         return
@@ -227,7 +227,7 @@ export class ConnectionHub {
           reiniciando: true,
           detalhe: sob
             ? 'reiniciando pelo systemd; a interface reconecta sozinha em alguns segundos'
-            : 'o daemon nao esta sob supervisao: vai subir um processo novo e sair, e se o novo falhar voce precisa rodar make daemon',
+            : 'o daemon não está sob supervisão: vai subir um processo novo e sair, e se o novo falhar você precisa rodar make daemon',
         })
         setTimeout(() => this.reiniciar(sob), 300)
         return
@@ -236,9 +236,9 @@ export class ConnectionHub {
         send({ type: 'health.list', items: this.health() })
         return
       case 'midia.ler': {
-        if (!/^[0-9a-f]{64}$/.test(frame.ref)) throw new Error('referencia de midia invalida')
+        if (!/^[0-9a-f]{64}$/.test(frame.ref)) throw new Error('referência de mídia inválida')
         const guardada = runtime.store.media(frame.ref)
-        if (!guardada) throw new Error('midia nao encontrada')
+        if (!guardada) throw new Error('mídia não encontrada')
         send({ type: 'midia.conteudo', ref: frame.ref, media_type: guardada.mediaType, data: guardada.bytes.toString('base64') })
         return
       }
@@ -269,7 +269,7 @@ export class ConnectionHub {
       case 'context.delete': {
         const dir = runtime.assertWorkspace(frame.workspace)
         const alvo = resolveInside(dir, frame.file)
-        if (!/\.md$/.test(alvo) || !alvo.includes(`${contextDir}`)) throw new Error(`so da para apagar arquivo dentro de ${contextDir}`)
+        if (!/\.md$/.test(alvo) || !alvo.includes(`${contextDir}`)) throw new Error(`só dá para apagar arquivo dentro de ${contextDir}`)
         rmSync(alvo, { force: true })
         send({
           type: 'context.list',
@@ -319,7 +319,7 @@ export class ConnectionHub {
         return
       case 'term.open': {
         const session = runtime.store.get(frame.session_id)
-        if (!session) throw new Error('sessao nao encontrada')
+        if (!session) throw new Error('sessão não encontrada')
         if (frame.term_id && runtime.terminals.has(frame.term_id)) {
           send({ type: 'term.opened', term_id: frame.term_id, session_id: frame.session_id, cwd: session.workspace, buffer: runtime.terminals.buffer(frame.term_id) })
           runtime.terminals.resize(frame.term_id, frame.cols, frame.rows)
@@ -366,7 +366,7 @@ export class ConnectionHub {
         const agent = frame.agent === undefined ? undefined : frame.agent === autoAgent ? autoAgent : runtime.profile(frame.agent).name
         const role = frame.role === undefined || frame.role === null ? frame.role : runtime.role(frame.role).name
         const session = runtime.store.update(frame.session_id, { title: frame.title, pinned: frame.pinned, archived: frame.archived, agent, role, mode: frame.mode, group: frame.group })
-        if (!session) throw new Error('sessao nao encontrada')
+        if (!session) throw new Error('sessão não encontrada')
         if (frame.mode === 'auto_approve') {
           for (const id of runtime.flushApprovals(frame.session_id)) this.broadcast({ type: 'approval.resolved', approval_id: id, decision: 'allow' })
         }
@@ -386,7 +386,7 @@ export class ConnectionHub {
       }
       case 'session.delete': {
         this.cancelarRunsDaSessao(frame.session_id)
-        if (!runtime.store.delete(frame.session_id)) throw new Error('sessao nao encontrada')
+        if (!runtime.store.delete(frame.session_id)) throw new Error('sessão não encontrada')
         this.broadcast({ type: 'session.deleted', session_id: frame.session_id })
         return
       }
@@ -395,14 +395,14 @@ export class ConnectionHub {
         return
       case 'session.fork': {
         const session = runtime.store.fork(frame.session_id)
-        if (!session) throw new Error('sessao nao encontrada')
+        if (!session) throw new Error('sessão não encontrada')
         send({ type: 'session.created', session })
         this.broadcast({ type: 'session.updated', session })
         return
       }
       case 'session.get': {
         const session = runtime.store.get(frame.session_id)
-        if (!session) throw new Error('sessao nao encontrada')
+        if (!session) throw new Error('sessão não encontrada')
         send({
           type: 'session.get',
           session,
@@ -444,7 +444,7 @@ export class ConnectionHub {
         return
       case 'approval.respond': {
         const ok = runtime.approvals.respond(frame.approval_id, frame.decision)
-        if (!ok) throw new Error('aprovacao nao encontrada ou expirada')
+        if (!ok) throw new Error('aprovação não encontrada ou expirada')
         this.broadcast({ type: 'approval.resolved', approval_id: frame.approval_id, decision: frame.decision })
         return
       }
@@ -453,7 +453,7 @@ export class ConnectionHub {
         return
       case 'budget.override': {
         const ok = runtime.overrideBudget(frame.run_id, frame.scope, frame.limit_usd)
-        if (!ok) throw new Error('run nao esta ativo')
+        if (!ok) throw new Error('run não está ativo')
         this.broadcast({ type: 'budget.overridden', run_id: frame.run_id, scope: frame.scope, limit_usd: frame.limit_usd })
         return
       }
@@ -464,7 +464,7 @@ export class ConnectionHub {
         this.scheduler.upsert(frame.schedule)
         return
       case 'schedule.delete':
-        if (!this.scheduler.delete(frame.id)) throw new Error('agendamento nao encontrado')
+        if (!this.scheduler.delete(frame.id)) throw new Error('agendamento não encontrado')
         return
       case 'schedule.run_now':
         void this.scheduler.runNow(frame.id).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
@@ -485,7 +485,7 @@ export class ConnectionHub {
         this.triggers.upsert(frame.trigger)
         return
       case 'trigger.delete':
-        if (!this.triggers.delete(frame.id)) throw new Error('gatilho nao encontrado')
+        if (!this.triggers.delete(frame.id)) throw new Error('gatilho não encontrado')
         return
       case 'mcp.servers': {
         send({ type: 'mcp.servers', servers: this.serverList() })
@@ -500,7 +500,7 @@ export class ConnectionHub {
       }
       case 'mcp.import': {
         const found = claudeCodeServers()
-        if (Object.keys(found).length === 0) throw new Error('nenhum servidor MCP encontrado no Claude Code deste usuario')
+        if (Object.keys(found).length === 0) throw new Error('nenhum servidor MCP encontrado no Claude Code deste usuário')
         const result = addServers(runtime.config.agentsDir, found)
         runtime.reload()
         send({ type: 'mcp.saved', added: result.added, secrets: result.secrets })
@@ -530,14 +530,14 @@ export class ConnectionHub {
       }
       case 'mcp.remove': {
         await runtime.mcp.close(frame.name)
-        if (!removeServer(runtime.config.agentsDir, frame.name)) throw new Error(`servidor nao encontrado: ${frame.name}`)
+        if (!removeServer(runtime.config.agentsDir, frame.name)) throw new Error(`servidor não encontrado: ${frame.name}`)
         runtime.reload()
         send({ type: 'mcp.saved', added: [], secrets: [] })
         this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
         return
       }
       case 'mcp.toggle': {
-        if (!setEnabled(runtime.config.agentsDir, frame.name, frame.enabled)) throw new Error(`servidor nao encontrado: ${frame.name}`)
+        if (!setEnabled(runtime.config.agentsDir, frame.name, frame.enabled)) throw new Error(`servidor não encontrado: ${frame.name}`)
         runtime.reload()
         if (!frame.enabled) await runtime.mcp.close(frame.name)
         else await this.connectMcp(frame.name)
@@ -572,7 +572,7 @@ export class ConnectionHub {
         runtime.push.unsubscribe(frame.endpoint)
         return
       case 'push.test':
-        await runtime.push.send({ title: 'Agent Hub', body: `Notificacoes ativas em ${runtime.config.deviceName}`, tag: 'teste' })
+        await runtime.push.send({ title: 'Agent Hub', body: `Notificações ativas em ${runtime.config.deviceName}`, tag: 'teste' })
         return
       case 'workflow.list':
         send({ type: 'workflow.list', workflows: this.workflows.list(), pending: this.workflows.pending() })
@@ -598,7 +598,7 @@ export class ConnectionHub {
         return
       case 'canal.padrao':
         this.canais.definirPadrao(frame.canal, { nome: frame.nome, agente: frame.agente, papel: frame.papel, workspace: frame.workspace ? runtime.assertWorkspace(frame.workspace) : undefined })
-        this.responderCanais(send, { aviso: 'padroes salvos; as proximas conversas usam esses valores' })
+        this.responderCanais(send, { aviso: 'padrões salvos; as próximas conversas usam esses valores' })
         return
       case 'canal.ligar':
         this.canais.ligar(frame.canal, frame.ligado)
@@ -687,7 +687,7 @@ export class ConnectionHub {
         return
       case 'plugins.papel': {
         const plugin = runtime.repo.plugins.find((p) => p.name === frame.plugin)
-        if (!plugin) throw new Error(`plugin nao carregado: ${frame.plugin}`)
+        if (!plugin) throw new Error(`plugin não carregado: ${frame.plugin}`)
         const arquivo = criarPapelDoPlugin(runtime.config.agentsDir, plugin, frame.modelos)
         send({ type: 'plugins.papel_criado', papel: plugin.name, arquivo })
         this.pluginsMudaram(send)
@@ -739,7 +739,7 @@ export class ConnectionHub {
   private workspaceOf(sessionId?: string, workspace?: string): string {
     if (sessionId) {
       const session = this.runtime.store.get(sessionId)
-      if (!session) throw new Error('sessao nao encontrada')
+      if (!session) throw new Error('sessão não encontrada')
       return session.workspace
     }
     if (workspace) return this.runtime.assertWorkspace(workspace)
@@ -821,7 +821,7 @@ export class ConnectionHub {
     if (pendentes.length > 0) {
       itens.push({
         level: 'aviso',
-        title: `${pendentes.length} aprovacao(oes) esperando`,
+        title: `${pendentes.length} aprovação(ões) esperando`,
         detail: pendentes.map((p) => p.tool).join(', '),
         action: 'Abra a conversa e responda, ou o pedido expira e o run para',
         route: `/session/${pendentes[0]!.sessionId}`,
@@ -832,7 +832,7 @@ export class ConnectionHub {
     if (falhas.length > 0) {
       itens.push({
         level: 'erro',
-        title: `${falhas.length} run(s) terminaram mal nas ultimas 24h`,
+        title: `${falhas.length} run(s) terminaram mal nas últimas 24h`,
         detail: resumoDeFalhas(falhas),
         action: 'Veja o motivo na conversa antes de repetir o pedido',
         route: falhas[0] ? `/session/${falhas[0].sessionId}` : undefined,
@@ -852,7 +852,7 @@ export class ConnectionHub {
     if (custo.globalMonthLimit !== null && custo.monthUsd > custo.globalMonthLimit * 0.8) {
       itens.push({
         level: custo.monthUsd >= custo.globalMonthLimit ? 'erro' : 'aviso',
-        title: `Orcamento do mes em ${((custo.monthUsd / custo.globalMonthLimit) * 100).toFixed(0)}%`,
+        title: `Orçamento do mês em ${((custo.monthUsd / custo.globalMonthLimit) * 100).toFixed(0)}%`,
         detail: `${custo.monthUsd.toFixed(2)} de ${custo.globalMonthLimit.toFixed(2)} USD`,
         action: 'Suba o teto em budgets.json ou segure os agentes caros',
         route: '/settings/custos',
@@ -860,14 +860,14 @@ export class ConnectionHub {
     }
     const precos = runtime.pricingStaleness()
     if (precos) {
-      itens.push({ level: 'aviso', title: 'Tabela de precos velha', detail: precos, action: 'Rode o agendamento revisao-precos e atualize o que mudou', route: '/settings/automacoes' })
+      itens.push({ level: 'aviso', title: 'Tabela de preços velha', detail: precos, action: 'Rode o agendamento revisao-precos e atualize o que mudou', route: '/settings/automacoes' })
     }
     const memoria = runtime.staleMemories()
     if (memoria) {
-      itens.push({ level: 'aviso', title: 'Memoria do projeto envelhecendo', detail: memoria.detalhe, action: 'Confira contra o codigo e apague o que nao vale mais', route: '/settings/contexto' })
+      itens.push({ level: 'aviso', title: 'Memória do projeto envelhecendo', detail: memoria.detalhe, action: 'Confira contra o código e apague o que não vale mais', route: '/settings/contexto' })
     }
     if (itens.length === 0) {
-      itens.push({ level: 'ok', title: 'Nada pedindo atencao', detail: 'Sem aprovacao parada, sem run quebrado, sem conector com erro', action: 'Pode tocar o trabalho' })
+      itens.push({ level: 'ok', title: 'Nada pedindo atenção', detail: 'Sem aprovação parada, sem run quebrado, sem conector com erro', action: 'Pode tocar o trabalho' })
     }
     return itens
   }
@@ -900,7 +900,7 @@ export class ConnectionHub {
       const registro = await this.runtime.makeResume(sessionId, runId, controller.signal)
       if (registro) this.broadcast({ type: 'session.resume', session_id: sessionId, resume: registro })
     } catch (err) {
-      if (!controller.signal.aborted) console.error(`retomada da sessao ${sessionId}: ${describe(err)}`)
+      if (!controller.signal.aborted) console.error(`retomada da sessão ${sessionId}: ${describe(err)}`)
     } finally {
       if (this.retomadas.get(sessionId)?.controller === controller) this.retomadas.delete(sessionId)
     }
@@ -950,7 +950,7 @@ export class ConnectionHub {
             void runtime.hooks.emit('run.end', { session_id: sessionId, run_id: runId, stop: event.stop, cost_usd: event.costUsd, steps: event.steps })
             if (event.stop === 'budget_exceeded') void runtime.hooks.emit('budget.exceeded', { session_id: sessionId, run_id: runId, message: event.error ?? '' })
             void runtime.push.send({
-              title: `Run ${event.stop === 'end' ? 'concluido' : event.stop}`,
+              title: `Run ${event.stop === 'end' ? 'concluído' : event.stop}`,
               body: `${event.steps} passos, ${event.costUsd.toFixed(4)} USD`,
               url: `/session/${sessionId}`,
               tag: `run-${runId}`,

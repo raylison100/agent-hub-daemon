@@ -9,7 +9,7 @@ import { whatsapp } from './whatsapp.js'
 export const tiposDeCanal: TipoDeCanal[] = [telegram, whatsapp]
 
 const planejados: TipoDeCanalResumo[] = [
-  { id: 'slack', nome: 'Slack', descricao: 'Bot no workspace do Slack, por Socket Mode, sem endereco publico.', disponivel: false },
+  { id: 'slack', nome: 'Slack', descricao: 'Bot no workspace do Slack, por Socket Mode, sem endereço público.', disponivel: false },
   { id: 'discord', nome: 'Discord', descricao: 'Bot num servidor do Discord, por mensagem direta ou canal.', disponivel: false },
 ]
 
@@ -80,7 +80,7 @@ export class Canais {
   criar(tipoId: CanalId, nome: string): string {
     this.tipo(tipoId)
     const limpo = nome.trim()
-    if (!limpo) throw new Error('de um nome ao canal')
+    if (!limpo) throw new Error('dê um nome ao canal')
     const base = slug(limpo) || tipoId
     const ids = new Set(this.lista().map((c) => c.id))
     let id = base
@@ -172,7 +172,7 @@ export class Canais {
     const ponte = this.pontes.get(id)
     if (!ponte) throw new Error('ligue o canal antes de testar')
     const conversas = this.config(id).permitidos.map((p) => p.conversa).filter((c): c is string => Boolean(c))
-    if (conversas.length === 0) throw new Error('ninguem permitido ainda: abra o bot, mande uma mensagem e clique em Permitir em "Pediram acesso"')
+    if (conversas.length === 0) throw new Error('ninguém permitido ainda: abra o bot, mande uma mensagem e clique em Permitir em "Pediram acesso"')
     for (const conversa of conversas) await ponte.enviar(conversa, 'Agent Hub conectado. As respostas e os avisos dos agentes chegam aqui.')
     return `mensagem enviada para ${conversas.length} conversa(s)`
   }
@@ -216,7 +216,7 @@ export class Canais {
     const tipo = this.tipo(c.tipo)
     const valores = this.valores(c)
     if (tipo.campos.some((campo) => campo.obrigatorio && !valores[campo.chave])) {
-      this.erros.set(id, 'canal ligado sem configuracao completa')
+      this.erros.set(id, 'canal ligado sem configuração completa')
       return
     }
     try {
@@ -246,7 +246,7 @@ export class Canais {
 
   private tipo(id: CanalId): TipoDeCanal {
     const tipo = tiposDeCanal.find((t) => t.id === id)
-    if (!tipo) throw new Error(`tipo de canal ainda nao suportado: ${id}`)
+    if (!tipo) throw new Error(`tipo de canal ainda não suportado: ${id}`)
     return tipo
   }
 
@@ -270,14 +270,14 @@ export class Canais {
 
   private config(id: string): ConfigDoCanal {
     const c = this.lista().find((x) => x.id === id)
-    if (!c) throw new Error(`canal nao encontrado: ${id}`)
+    if (!c) throw new Error(`canal não encontrado: ${id}`)
     return c
   }
 
   private alterar(id: string, mudanca: (c: ConfigDoCanal) => void): void {
     const lista = this.lista()
     const c = lista.find((x) => x.id === id)
-    if (!c) throw new Error(`canal nao encontrado: ${id}`)
+    if (!c) throw new Error(`canal não encontrado: ${id}`)
     mudanca(c)
     this.gravar(lista)
   }

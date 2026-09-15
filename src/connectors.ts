@@ -160,7 +160,7 @@ export function agentsUsing(agentsDir: string, server: string): string[] {
 /** Reescreve a linha `mcp: [...]` do perfil, que e a lista de servidores que o agente enxerga. */
 export function setAgentServers(agentsDir: string, agent: string, servers: string[]): void {
   const file = join(agentsDir, 'profiles', `${agent}.md`)
-  if (!existsSync(file)) throw new Error(`perfil nao encontrado: ${agent}`)
+  if (!existsSync(file)) throw new Error(`perfil não encontrado: ${agent}`)
   const text = readFileSync(file, 'utf8')
   const linha = /^(\s*)mcp:\s*\[[^\]]*\]\s*$/m
   if (!linha.test(text)) throw new Error(`perfil ${agent} sem a linha mcp: [] em tools`)
