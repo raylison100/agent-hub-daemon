@@ -110,16 +110,23 @@ export class PonteDeCanal {
     await this.transporte.enviar(conversa, texto)
   }
 
-  /** Manda texto com imagens em markdown para a conversa padrao, ligando as mensagens a uma sessao para respostas citadas voltarem a ela. */
+  /** Conversas que recebem avisos: as de todas as pessoas permitidas que ja falaram com o bot. */
+  conversasDeAviso(): string[] {
+    return [...new Set(this.deps.config().permitidos.map((p) => p.conversa).filter((c): c is string => Boolean(c)))]
+  }
+
+  /** Manda texto com imagens em markdown para todas as pessoas permitidas, ligando as mensagens a uma sessao para respostas citadas voltarem a ela. */
   async enviarParaConversaPadrao(texto: string, workspace: string | undefined, sessionId: string | undefined): Promise<void> {
-    const conversa = this.conversaPadrao()
-    if (!conversa) throw new Error('ninguém permitido ainda falou com o bot')
-    if (sessionId) {
-      const estado = this.deps.config().conversas[conversa] ?? {}
-      this.salvarConversa(conversa, { ...estado, sessionId, workspace: workspace ?? estado.workspace })
-      this.conversaDaSessao.set(sessionId, conversa)
+    const conversas = this.conversasDeAviso()
+    if (conversas.length === 0) throw new Error('ninguém permitido ainda falou com o bot')
+    for (const conversa of conversas) {
+      if (sessionId) {
+        const estado = this.deps.config().conversas[conversa] ?? {}
+        this.salvarConversa(conversa, { ...estado, sessionId, workspace: workspace ?? estado.workspace })
+        this.conversaDaSessao.set(sessionId, conversa)
+      }
+      await this.responder(conversa, texto, workspace ?? this.workspaceDa(conversa), sessionId ?? '')
     }
-    await this.responder(conversa, texto, workspace ?? this.workspaceDa(conversa), sessionId ?? '')
   }
 
   /** Envia a resposta de um agente: o texto primeiro e depois as imagens citadas em markdown, quando o canal aceita imagem. */
@@ -138,15 +145,15 @@ export class PonteDeCanal {
         }
       }
     }
-    this.lembrarMensagens(ids, sessionId)
+    this.lembrarMensagens(conversa, ids, sessionId)
   }
 
   /** Guarda de qual sessao veio cada mensagem enviada, para a resposta citando uma delas voltar para a mesma sessao. */
-  private lembrarMensagens(ids: string[], sessionId: string): void {
+  private lembrarMensagens(conversa: string, ids: string[], sessionId: string): void {
     if (ids.length === 0) return
     this.deps.alterar((c) => {
       const mapa = { ...(c.mensagens ?? {}) }
-      for (const id of ids) mapa[id] = sessionId
+      for (const id of ids) mapa[`${conversa}:${id}`] = sessionId
       const chaves = Object.keys(mapa)
       c.mensagens = Object.fromEntries(chaves.slice(Math.max(0, chaves.length - 500)).map((k) => [k, mapa[k]!]))
     })
@@ -184,7 +191,7 @@ export class PonteDeCanal {
     }
     const config = this.deps.config()
     const estado = config.conversas[m.conversa] ?? {}
-    const citada = m.respondendoA ? config.mensagens?.[m.respondendoA] : undefined
+    const citada = m.respondendoA ? (config.mensagens?.[`${m.conversa}:${m.respondendoA}`] ?? config.mensagens?.[m.respondendoA]) : undefined
     if (citada && citada !== estado.sessionId) this.salvarConversa(m.conversa, { ...estado, sessionId: citada })
     let sessionId = citada ?? estado.sessionId
     if (!sessionId) {
@@ -318,19 +325,21 @@ export class PonteDeCanal {
     }
     if (f.type === 'automation.finished' && f.notify?.some((n) => n === this.deps.config().id)) {
       if (f.stop === 'end' && f.text?.trimStart().startsWith('[sem-aviso]')) return
-      const conversa = this.conversaPadrao()
-      if (!conversa) {
+      const conversas = this.conversasDeAviso()
+      if (conversas.length === 0) {
         this.deps.log(`automação ${f.id} terminou, mas nenhuma pessoa permitida falou com o bot ainda`)
         return
       }
       const status = `Automação ${f.id} terminou com ${f.stop} (${f.cost_usd.toFixed(4)} USD).`
-      if (f.text) {
-        const estado = this.deps.config().conversas[conversa] ?? {}
-        this.salvarConversa(conversa, { ...estado, sessionId: f.session_id, workspace: f.workspace ?? estado.workspace })
-        this.conversaDaSessao.set(f.session_id, conversa)
-      }
       const corpo = f.text ? `${f.text}\n\n[${status} Responda aqui para continuar essa sessão; /nova volta ao normal.]` : status
-      void this.responder(conversa, corpo, f.workspace ?? this.workspaceDa(conversa), f.session_id).catch((err: unknown) => this.deps.log(descrever(err)))
+      for (const conversa of conversas) {
+        if (f.text) {
+          const estado = this.deps.config().conversas[conversa] ?? {}
+          this.salvarConversa(conversa, { ...estado, sessionId: f.session_id, workspace: f.workspace ?? estado.workspace })
+          this.conversaDaSessao.set(f.session_id, conversa)
+        }
+        void this.responder(conversa, corpo, f.workspace ?? this.workspaceDa(conversa), f.session_id).catch((err: unknown) => this.deps.log(descrever(err)))
+      }
     }
   }
 
