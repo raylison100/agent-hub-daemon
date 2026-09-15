@@ -135,15 +135,30 @@ export class Canais {
   permitir(id: string, pessoa: string): void {
     this.alterar(id, (c) => {
       const pedido = c.pedidos.find((p) => p.id === pessoa)
-      if (!c.permitidos.some((p) => p.id === pessoa)) c.permitidos.push(pedido ? { id: pedido.id, nome: pedido.nome, apelido: pedido.apelido, usuario: pedido.usuario, conversa: pedido.conversa, foto: pedido.foto } : { id: pessoa })
+      const conhecida = this.lista()
+        .filter((x) => x.tipo === c.tipo)
+        .flatMap((x) => x.permitidos)
+        .find((p) => p.id === pessoa && p.apelido)
+      if (!c.permitidos.some((p) => p.id === pessoa)) {
+        c.permitidos.push(
+          pedido
+            ? { id: pedido.id, nome: pedido.nome, apelido: pedido.apelido ?? conhecida?.apelido, usuario: pedido.usuario, conversa: pedido.conversa, foto: pedido.foto }
+            : { id: pessoa, apelido: conhecida?.apelido },
+        )
+      }
       c.pedidos = c.pedidos.filter((p) => p.id !== pessoa)
     })
   }
 
+  /** Apelido vale para a mesma pessoa em todos os canais do mesmo tipo, porque o id e o da conta dela no servico. */
   apelidar(id: string, pessoa: string, apelido: string): void {
-    this.alterar(id, (c) => {
+    const tipo = this.config(id).tipo
+    const lista = this.lista()
+    for (const c of lista) {
+      if (c.tipo !== tipo) continue
       for (const p of [...c.permitidos, ...c.pedidos]) if (p.id === pessoa) p.apelido = apelido.trim() || undefined
-    })
+    }
+    this.gravar(lista)
   }
 
   removerPessoa(id: string, pessoa: string): void {
