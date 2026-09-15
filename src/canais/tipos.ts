@@ -55,6 +55,8 @@ export interface TipoDeCanal {
   campos: CampoDoCanal[]
   botoes: boolean
   link(conta: string): string | null
+  rotuloDoId: string
+  foto?(valores: Record<string, string>, pessoa: string): Promise<{ mediaType: string; base64: string } | null>
   validar(valores: Record<string, string>): Promise<{ conta: string }>
   criar(valores: Record<string, string>): Transporte
 }

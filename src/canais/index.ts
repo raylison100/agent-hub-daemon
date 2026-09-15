@@ -29,6 +29,7 @@ export interface DependenciasDosCanais {
 export class Canais {
   private readonly pontes = new Map<string, PonteDeCanal>()
   private readonly erros = new Map<string, string>()
+  private readonly fotosTentadas = new Set<string>()
 
   constructor(private readonly deps: DependenciasDosCanais) {
     this.migrarCanalUnico()
@@ -51,6 +52,7 @@ export class Canais {
     return this.lista().map((c) => {
       const tipo = this.tipo(c.tipo)
       const valores = this.valores(c)
+      this.buscarFotos(c, tipo, valores)
       return {
         id: c.id,
         tipo: c.tipo,
@@ -64,6 +66,7 @@ export class Canais {
         configurado: tipo.campos.every((campo) => !campo.obrigatorio || Boolean(valores[campo.chave])),
         conta: c.conta,
         link: c.conta ? tipo.link(c.conta) : null,
+        rotuloDoId: tipo.rotuloDoId,
         ligado: c.ligado,
         rodando: this.pontes.has(c.id),
         erro: this.erros.get(c.id) ?? null,
@@ -132,8 +135,14 @@ export class Canais {
   permitir(id: string, pessoa: string): void {
     this.alterar(id, (c) => {
       const pedido = c.pedidos.find((p) => p.id === pessoa)
-      if (!c.permitidos.some((p) => p.id === pessoa)) c.permitidos.push(pedido ? { id: pedido.id, nome: pedido.nome, usuario: pedido.usuario, conversa: pedido.conversa } : { id: pessoa })
+      if (!c.permitidos.some((p) => p.id === pessoa)) c.permitidos.push(pedido ? { id: pedido.id, nome: pedido.nome, apelido: pedido.apelido, usuario: pedido.usuario, conversa: pedido.conversa, foto: pedido.foto } : { id: pessoa })
       c.pedidos = c.pedidos.filter((p) => p.id !== pessoa)
+    })
+  }
+
+  apelidar(id: string, pessoa: string, apelido: string): void {
+    this.alterar(id, (c) => {
+      for (const p of [...c.permitidos, ...c.pedidos]) if (p.id === pessoa) p.apelido = apelido.trim() || undefined
     })
   }
 
@@ -159,6 +168,27 @@ export class Canais {
     for (const campo of this.tipo(c.tipo).campos) if (campo.segredo) this.deps.secrets.delete(nomeDoSegredo(id, campo.chave))
     this.gravar(this.lista().filter((x) => x.id !== id))
     this.erros.delete(id)
+  }
+
+  /** Baixa uma vez por execucao a foto de perfil de quem ainda nao tem, grava na midia e avisa as telas. */
+  private buscarFotos(c: ConfigDoCanal, tipo: TipoDeCanal, valores: Record<string, string>): void {
+    if (!tipo.foto) return
+    for (const p of [...c.permitidos, ...c.pedidos]) {
+      const chave = `${c.id}:${p.id}`
+      if (p.foto || this.fotosTentadas.has(chave)) continue
+      this.fotosTentadas.add(chave)
+      void tipo
+        .foto(valores, p.id)
+        .then((foto) => {
+          if (!foto) return
+          const ref = this.deps.store.putMedia(foto.mediaType, foto.base64)
+          this.alterar(c.id, (atual) => {
+            for (const pessoa of [...atual.permitidos, ...atual.pedidos]) if (pessoa.id === p.id) pessoa.foto = ref
+          })
+          this.deps.mudou()
+        })
+        .catch((err: unknown) => this.deps.log(`[canal ${c.id}] foto de ${p.id}: ${err instanceof Error ? err.message : String(err)}`))
+    }
   }
 
   private reiniciar(id: string): void {

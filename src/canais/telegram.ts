@@ -57,6 +57,19 @@ export class TelegramApi {
     }
   }
 
+  /** Foto de perfil pequena do usuario, baixada pelo daemon para o token nao sair da maquina. */
+  async fotoDoUsuario(userId: string): Promise<{ mediaType: string; base64: string } | null> {
+    const fotos = await this.call<{ photos: { file_id: string; width: number }[][] }>('getUserProfilePhotos', { user_id: Number(userId), limit: 1 })
+    const tamanhos = fotos.photos[0]
+    if (!tamanhos || tamanhos.length === 0) return null
+    const escolhida = tamanhos.find((t) => t.width >= 160) ?? tamanhos[tamanhos.length - 1]!
+    const arquivo = await this.call<{ file_path?: string }>('getFile', { file_id: escolhida.file_id })
+    if (!arquivo.file_path) return null
+    const res = await fetch(`https://api.telegram.org/file/bot${this.token}/${arquivo.file_path}`, { signal: AbortSignal.timeout(20000) })
+    if (!res.ok) return null
+    return { mediaType: res.headers.get('content-type')?.startsWith('image/') ? res.headers.get('content-type')! : 'image/jpeg', base64: Buffer.from(await res.arrayBuffer()).toString('base64') }
+  }
+
   async answerCallback(id: string, text: string): Promise<void> {
     await this.call('answerCallbackQuery', { callback_query_id: id, text })
   }
@@ -132,6 +145,8 @@ export const telegram: TipoDeCanal = {
   campos: [{ chave: 'token', rotulo: 'Token do bot', segredo: true, obrigatorio: true, exemplo: '123456789:AA...' }],
   botoes: true,
   link: (conta) => `https://t.me/${conta.replace(/^@/, '')}`,
+  rotuloDoId: 'ID do Telegram',
+  foto: (valores, pessoa) => new TelegramApi(valores.token ?? '').fotoDoUsuario(pessoa),
   async validar(valores) {
     const me = await new TelegramApi(valores.token ?? '').me().catch((err: unknown) => {
       throw new Error(`token recusado pelo Telegram: ${err instanceof Error ? err.message : String(err)}`)

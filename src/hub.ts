@@ -608,6 +608,10 @@ export class ConnectionHub {
         this.canais.permitir(frame.canal, frame.pessoa)
         this.responderCanais(send)
         return
+      case 'canal.apelidar':
+        this.canais.apelidar(frame.canal, frame.pessoa, frame.apelido)
+        this.responderCanais(send, { aviso: 'nome salvo' })
+        return
       case 'canal.remover_pessoa':
         this.canais.removerPessoa(frame.canal, frame.pessoa)
         this.responderCanais(send)

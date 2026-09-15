@@ -2,10 +2,14 @@ import { NodeDaemonClient, type ServerFrame } from '@agent-hub/core'
 import type { BotaoRecebido, MensagemRecebida, Pessoa, TipoDeCanal, Transporte } from './tipos.js'
 
 export interface PessoaPermitida extends Pessoa {
+  apelido?: string
   conversa?: string
+  foto?: string
 }
 
 export interface PedidoDeAcesso extends Pessoa {
+  apelido?: string
+  foto?: string
   conversa: string
   em: number
 }

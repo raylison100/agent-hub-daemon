@@ -133,6 +133,7 @@ export const whatsapp: TipoDeCanal = {
   ],
   botoes: false,
   link: () => null,
+  rotuloDoId: 'WhatsApp',
   async validar(valores) {
     const api = new WhatsAppApi(valores.url ?? '', valores.chave ?? '', valores.instancia ?? '')
     const info = await api.instanciaInfo().catch((err: unknown) => {
