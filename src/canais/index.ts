@@ -4,13 +4,13 @@ import type { SessionStore } from '../store.js'
 import { PonteDeCanal, type ConfigDoCanal, type PadraoDoCanal } from './ponte.js'
 import { telegram } from './telegram.js'
 import type { TipoDeCanal } from './tipos.js'
+import { whatsapp } from './whatsapp.js'
 
-export const tiposDeCanal: TipoDeCanal[] = [telegram]
+export const tiposDeCanal: TipoDeCanal[] = [telegram, whatsapp]
 
 const planejados: TipoDeCanalResumo[] = [
   { id: 'slack', nome: 'Slack', descricao: 'Bot no workspace do Slack, por Socket Mode, sem endereco publico.', disponivel: false },
   { id: 'discord', nome: 'Discord', descricao: 'Bot num servidor do Discord, por mensagem direta ou canal.', disponivel: false },
-  { id: 'whatsapp', nome: 'WhatsApp por API', descricao: 'Numero de WhatsApp de um provedor com API HTTP.', disponivel: false },
 ]
 
 const chaveDaLista = 'canais'
