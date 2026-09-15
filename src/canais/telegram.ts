@@ -1,4 +1,4 @@
-import type { Botao, EventosDoTransporte, TipoDeCanal, Transporte } from './tipos.js'
+import type { Botao, EventosDoTransporte, ImagemParaEnviar, TipoDeCanal, Transporte } from './tipos.js'
 
 interface TelegramUser {
   id: number
@@ -70,6 +70,17 @@ export class TelegramApi {
     return { mediaType: res.headers.get('content-type')?.startsWith('image/') ? res.headers.get('content-type')! : 'image/jpeg', base64: Buffer.from(await res.arrayBuffer()).toString('base64') }
   }
 
+  async sendPhoto(chatId: string, imagem: ImagemParaEnviar): Promise<void> {
+    const form = new FormData()
+    form.append('chat_id', chatId)
+    if (imagem.legenda) form.append('caption', imagem.legenda.slice(0, 1024))
+    const campo = imagem.bytes.length > 9_500_000 ? 'document' : 'photo'
+    form.append(campo, new Blob([new Uint8Array(imagem.bytes)], { type: imagem.mediaType }), imagem.nome)
+    const res = await fetch(`https://api.telegram.org/bot${this.token}/${campo === 'photo' ? 'sendPhoto' : 'sendDocument'}`, { method: 'POST', body: form, signal: AbortSignal.timeout(60000) })
+    const json = (await res.json()) as { ok: boolean; description?: string }
+    if (!json.ok) throw new Error(json.description ?? `HTTP ${res.status}`)
+  }
+
   async answerCallback(id: string, text: string): Promise<void> {
     await this.call('answerCallbackQuery', { callback_query_id: id, text })
   }
@@ -128,6 +139,10 @@ class TransporteTelegram implements Transporte {
 
   enviar(conversa: string, texto: string, botoes?: Botao[][]): Promise<void> {
     return this.api.send(conversa, texto, botoes)
+  }
+
+  enviarImagem(conversa: string, imagem: ImagemParaEnviar): Promise<void> {
+    return this.api.sendPhoto(conversa, imagem)
   }
 }
 

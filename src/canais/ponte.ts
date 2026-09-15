@@ -1,4 +1,5 @@
 import { NodeDaemonClient, type ServerFrame } from '@agent-hub/core'
+import { separarImagens } from './imagens.js'
 import type { BotaoRecebido, MensagemRecebida, Pessoa, TipoDeCanal, Transporte } from './tipos.js'
 
 export interface PessoaPermitida extends Pessoa {
@@ -105,6 +106,28 @@ export class PonteDeCanal {
 
   async enviar(conversa: string, texto: string): Promise<void> {
     await this.transporte.enviar(conversa, texto)
+  }
+
+  /** Envia a resposta de um agente: o texto primeiro e depois as imagens citadas em markdown, quando o canal aceita imagem. */
+  private async responder(conversa: string, texto: string, workspace: string): Promise<void> {
+    if (!this.transporte.enviarImagem) {
+      await this.transporte.enviar(conversa, texto)
+      return
+    }
+    const separado = separarImagens(texto, workspace)
+    await this.transporte.enviar(conversa, separado.texto || '(imagens abaixo)')
+    for (const imagem of separado.imagens) {
+      try {
+        await this.transporte.enviarImagem(conversa, imagem)
+      } catch (err) {
+        await this.transporte.enviar(conversa, `Nao consegui enviar ${imagem.nome}: ${descrever(err)}`)
+      }
+    }
+  }
+
+  private workspaceDa(conversa: string): string {
+    const config = this.deps.config()
+    return config.conversas[conversa]?.workspace ?? config.padrao.workspace ?? this.deps.workspacePadrao
   }
 
   private permitido(id: string): PessoaPermitida | undefined {
@@ -248,7 +271,7 @@ export class PonteDeCanal {
         this.runs.delete(f.run_id)
         const corpo = run.texto.join('').trim() || '(sem texto)'
         const rodape = `\n\n[${e.stop}, ${e.steps} passos, ${run.ferramentas} ferramentas, ${e.costUsd.toFixed(4)} USD]${e.error ? `\n${e.error}` : ''}`
-        void this.transporte.enviar(run.conversa, corpo + rodape).catch((err: unknown) => this.deps.log(descrever(err)))
+        void this.responder(run.conversa, corpo + rodape, this.workspaceDa(run.conversa)).catch((err: unknown) => this.deps.log(descrever(err)))
       }
       return
     }
@@ -265,6 +288,7 @@ export class PonteDeCanal {
       return
     }
     if (f.type === 'automation.finished' && f.notify?.some((n) => n === this.deps.config().id)) {
+      if (f.stop === 'end' && f.text?.trimStart().startsWith('[sem-aviso]')) return
       const conversa = this.conversaPadrao()
       if (!conversa) {
         this.deps.log(`automacao ${f.id} terminou, mas nenhuma pessoa permitida falou com o bot ainda`)
@@ -277,7 +301,7 @@ export class PonteDeCanal {
         this.conversaDaSessao.set(f.session_id, conversa)
       }
       const corpo = f.text ? `${f.text}\n\n[${status} Responda aqui para continuar essa sessao; /nova volta ao normal.]` : status
-      void this.transporte.enviar(conversa, corpo).catch((err: unknown) => this.deps.log(descrever(err)))
+      void this.responder(conversa, corpo, f.workspace ?? this.workspaceDa(conversa)).catch((err: unknown) => this.deps.log(descrever(err)))
     }
   }
 

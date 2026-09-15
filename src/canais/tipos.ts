@@ -35,6 +35,14 @@ export interface Transporte {
   iniciar(eventos: EventosDoTransporte): void
   parar(): void
   enviar(conversa: string, texto: string, botoes?: Botao[][]): Promise<void>
+  enviarImagem?(conversa: string, imagem: ImagemParaEnviar): Promise<void>
+}
+
+export interface ImagemParaEnviar {
+  bytes: Buffer
+  mediaType: string
+  nome: string
+  legenda?: string
 }
 
 export interface CampoDoCanal {

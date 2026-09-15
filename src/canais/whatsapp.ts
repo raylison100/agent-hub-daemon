@@ -1,4 +1,4 @@
-import type { EventosDoTransporte, TipoDeCanal, Transporte } from './tipos.js'
+import type { EventosDoTransporte, ImagemParaEnviar, TipoDeCanal, Transporte } from './tipos.js'
 
 interface Conversa {
   remoteJid: string
@@ -42,6 +42,10 @@ export class WhatsAppApi {
 
   mensagens(remoteJid: string): Promise<{ messages: Mensagem[] }> {
     return this.chamar('GET', `/messages?remoteJid=${encodeURIComponent(remoteJid)}&limit=10`)
+  }
+
+  async enviarImagem(destino: string, imagem: ImagemParaEnviar): Promise<void> {
+    await this.chamar('POST', '/send/image', { phone: destino, image: `data:${imagem.mediaType};base64,${imagem.bytes.toString('base64')}`, caption: imagem.legenda?.slice(0, 1024) })
   }
 
   async enviarTexto(destino: string, texto: string): Promise<void> {
@@ -93,6 +97,10 @@ class TransporteWhatsApp implements Transporte {
 
   enviar(conversa: string, texto: string): Promise<void> {
     return this.api.enviarTexto(conversa, texto)
+  }
+
+  enviarImagem(conversa: string, imagem: ImagemParaEnviar): Promise<void> {
+    return this.api.enviarImagem(conversa, imagem)
   }
 
   private async buscar(eventos: EventosDoTransporte): Promise<void> {
