@@ -924,7 +924,12 @@ export class ConnectionHub {
           })
         },
       })
-      .catch((err: unknown) => this.broadcast({ type: 'error', message: describe(err), ref: runId }))
+      .catch((err: unknown) => {
+        this.broadcast({ type: 'error', message: describe(err), ref: runId })
+        const event = { type: 'run_finished' as const, stop: 'error' as const, steps: 0, costUsd: 0, error: describe(err) }
+        const seq = runtime.store.appendEvent(sessionId, runId, event)
+        this.broadcast({ type: 'event', session_id: sessionId, run_id: runId, seq, event })
+      })
       .finally(() => {
         this.runs.delete(runId)
         this.sessaoDoRun.delete(runId)
