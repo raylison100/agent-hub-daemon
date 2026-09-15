@@ -972,8 +972,9 @@ export class ConnectionHub {
       await this.runtime.ensureMcpServer(name)
       this.mcpErrors.delete(name)
     } catch (err) {
-      this.mcpErrors.set(name, describe(err))
-      throw err
+      const mensagem = erroDeConector(describe(err))
+      this.mcpErrors.set(name, mensagem)
+      throw new Error(mensagem)
     }
   }
 
@@ -1207,6 +1208,16 @@ function safeEqual(a: string, b: string): boolean {
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** Traduz as falhas mais comuns ao iniciar um conector para uma frase que diz o que conferir. */
+export function erroDeConector(mensagem: string): string {
+  if (/ENOENT|command not found|not found: /i.test(mensagem)) return `o programa do conector não foi encontrado nesta máquina: confira o comando (${mensagem})`
+  if (/Connection closed|-32000/i.test(mensagem)) return `o programa do conector fechou antes de responder: confira o comando, os argumentos e as chaves (${mensagem})`
+  if (/timed? ?out|timeout/i.test(mensagem)) return `o conector demorou demais para responder (${mensagem})`
+  if (/401|403|unauthori[sz]ed|forbidden/i.test(mensagem)) return `o serviço recusou o acesso: confira a chave ou autorize de novo (${mensagem})`
+  if (/ECONNREFUSED|ENOTFOUND|fetch failed/i.test(mensagem)) return `não consegui chegar ao endereço do conector (${mensagem})`
+  return mensagem
 }
 
 /** O daemon esta sob um supervisor que o levanta de novo: systemd marca a variavel INVOCATION_ID no processo. */

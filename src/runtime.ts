@@ -666,7 +666,7 @@ export class Runtime {
   assertWorkspace(dir: string): string {
     const target = resolve(dir)
     const allowed = this.config.workspaces.some((w) => target === w || target.startsWith(w + sep))
-    if (!allowed) throw new Error(`workspace nao permitido: ${dir} (resolvido para ${target}). Adicione em workspaces no config.toml`)
+    if (!allowed) throw new Error(`workspace não permitido: ${dir} (resolvido para ${target}). Adicione em workspaces no config.toml`)
     if (!existsSync(target)) throw new Error(`workspace não existe: ${target}`)
     return target
   }
