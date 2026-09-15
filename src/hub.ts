@@ -3,6 +3,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
+  apiKeyEnv,
   contextDir,
   decisionsDir,
   isRepoRoot,
@@ -23,6 +24,7 @@ import {
 import { lerArquivoDaSessao } from './arquivos.js'
 import { Atualizacao, systemdRunDisponivel } from './atualizacao.js'
 import { adicionarPlugin, alternarPlugin, criarPapelDoPlugin, pluginsDoClaudeCode, removerPlugin, resumirPlugins } from './plugins-instalacao.js'
+import { chaveDeProvedorTestavel, chavesDoConector, detalheDoConector, lerPrecos, salvarConector, salvarLimites, salvarPrecos, testarChaveDeProvedor } from './configuracoes.js'
 import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Canais } from './canais/index.js'
@@ -426,17 +428,9 @@ export class ConnectionHub {
       case 'run.start':
         this.startRun(frame.session_id, frame.text, send, frame.mode, frame.reasoning, frame.agent, frame.improve, frame.images, frame.role, frame.run_usd, frame.budget_scope)
         return
-      case 'cost.status': {
-        const s = runtime.costStatus()
-        send({
-          type: 'cost.status',
-          today_usd: s.todayUsd,
-          month_usd: s.monthUsd,
-          global_month_limit_usd: s.globalMonthLimit,
-          agents: Object.fromEntries(Object.entries(s.agents).map(([k, v]) => [k, { today_usd: v.todayUsd, day_limit_usd: v.dayLimit }])),
-        })
+      case 'cost.status':
+        send(this.statusDeCusto())
         return
-      }
       case 'cost.export': {
         const out = runtime.ledger.exportCsv({ since: frame.since, until: frame.until })
         send({ type: 'cost.export', csv: out.csv, rows: out.rows })
@@ -573,8 +567,17 @@ export class ConnectionHub {
           else servers.delete(frame.name)
           setAgentServers(dir, profile, [...servers])
         }
+        for (const papel of runtime.repo.roles.values()) {
+          if (!papel.file.startsWith(join(dir, 'roles'))) continue
+          const atual = papel.tools?.mcp ?? []
+          const querUsar = frame.agents.includes(papel.name)
+          if (atual.includes(frame.name) === querUsar) continue
+          const detalhe = roleDetail(papel)
+          detalhe.tools.mcp = querUsar ? [...atual, frame.name] : atual.filter((s) => s !== frame.name)
+          writeFileSync(papel.file, serializeRole(detalhe, { delegates: papel.delegates, phases: papel.phases }))
+        }
         runtime.reload()
-        send({ type: 'mcp.agents', name: frame.name, agents: agentsUsing(dir, frame.name) })
+        send({ type: 'mcp.agents', name: frame.name, agents: this.usosDoConector(frame.name) })
         return
       }
       case 'mcp.remove': {
@@ -627,11 +630,11 @@ export class ConnectionHub {
         send({ type: 'workflow.list', workflows: this.workflows.list(), pending: this.workflows.pending() })
         return
       case 'secrets.list':
-        send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
+        send(this.listaDeChaves())
         return
       case 'secrets.set':
         runtime.secrets.set(frame.name, frame.value)
-        send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
+        send(this.listaDeChaves())
         return
       case 'canais.estado':
         send(this.estadoDosCanais())
@@ -744,8 +747,46 @@ export class ConnectionHub {
       }
       case 'secrets.delete':
         runtime.secrets.delete(frame.name)
-        send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
+        send(this.listaDeChaves())
         return
+      case 'secrets.testar': {
+        const resultado = await this.testarChave(frame.name)
+        send({ type: 'secrets.teste', name: frame.name, ...resultado })
+        return
+      }
+      case 'budgets.save':
+        salvarLimites(runtime.config.agentsDir, frame.limites)
+        runtime.reload()
+        send(this.statusDeCusto())
+        return
+      case 'pricing.get':
+        send(this.tabelaDePrecos())
+        return
+      case 'pricing.save':
+        salvarPrecos(runtime.config.agentsDir, frame.modelos)
+        runtime.reload()
+        send(this.tabelaDePrecos())
+        return
+      case 'mcp.get':
+        send({
+          type: 'mcp.detail',
+          conector: detalheDoConector(runtime.config.agentsDir, frame.name, (n) => Boolean(runtime.secrets.get(n))),
+          agentes: this.usosDoConector(frame.name),
+        })
+        return
+      case 'mcp.save': {
+        const { nome } = salvarConector(runtime.config.agentsDir, frame.conector, frame.original, (n, v) => runtime.secrets.set(n, v))
+        await runtime.mcp.close(nome)
+        this.mcpErrors.delete(nome)
+        runtime.reload()
+        send({
+          type: 'mcp.detail',
+          conector: detalheDoConector(runtime.config.agentsDir, nome, (n) => Boolean(runtime.secrets.get(n))),
+          agentes: this.usosDoConector(nome),
+        })
+        this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
+        return
+      }
       case 'workflow.run':
         void this.workflows.run({ name: frame.name, inputs: frame.inputs, workspace: frame.workspace }).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
         return
@@ -766,6 +807,97 @@ export class ConnectionHub {
     return { type: 'canais.estado', tipos: this.canais.tipos(), canais: this.canais.estado(), ...extra }
   }
 
+  /** Gasto de hoje e do mes com os limites configurados. */
+  private statusDeCusto(): Extract<ServerFrame, { type: 'cost.status' }> {
+    const s = this.runtime.costStatus()
+    return {
+      type: 'cost.status',
+      today_usd: s.todayUsd,
+      month_usd: s.monthUsd,
+      global_month_limit_usd: s.globalMonthLimit,
+      automation_month_limit_usd: this.runtime.repo.budgets.automation_month_usd ?? null,
+      agents: Object.fromEntries(Object.entries(s.agents).map(([k, v]) => [k, { today_usd: v.todayUsd, day_limit_usd: v.dayLimit }])),
+    }
+  }
+
+  /** Tabela de precos com os modelos em uso pelos agentes e os que estao sem preco. */
+  private tabelaDePrecos(): Extract<ServerFrame, { type: 'pricing' }> {
+    const { versao, modelos } = lerPrecos(this.runtime.config.agentsDir)
+    const chaves = new Set(modelos.map((m) => m.chave))
+    const emUso = [...new Set([...this.runtime.repo.profiles.values()].map((p) => `${p.provider}/${p.model}`))].sort()
+    const semPreco = emUso.filter((k) => !chaves.has(k) && !chaves.has(`${k.split('/')[0]}/*`))
+    return { type: 'pricing', versao, idade_dias: this.runtime.pricing.ageDays(), modelos, em_uso: emUso, sem_preco: semPreco }
+  }
+
+  /** Onde cada chave e usada: provedores dos agentes, conectores, plugins e canais. */
+  private usosDasChaves(): Map<string, { tipo: 'modelo' | 'conector' | 'plugin' | 'canal'; nome: string }[]> {
+    const { runtime } = this
+    const usos = new Map<string, { tipo: 'modelo' | 'conector' | 'plugin' | 'canal'; nome: string }[]>()
+    const anotar = (chave: string, tipo: 'modelo' | 'conector' | 'plugin' | 'canal', nome: string): void => {
+      const lista = usos.get(chave) ?? []
+      if (!lista.some((u) => u.tipo === tipo && u.nome === nome)) lista.push({ tipo, nome })
+      usos.set(chave, lista)
+    }
+    for (const perfil of runtime.repo.profiles.values()) {
+      const chave = apiKeyEnv(perfil)
+      if (chave) anotar(chave, 'modelo', perfil.name)
+    }
+    for (const [nome, server] of Object.entries(runtime.repo.mcp.servers)) for (const chave of chavesDoConector(server)) anotar(chave, 'conector', nome)
+    const plugins = this.listaDePlugins()
+    if (plugins.type === 'plugins.list') for (const p of plugins.plugins) for (const r of p.requisitos) anotar(r.variavel, 'plugin', p.name)
+    for (const canal of this.canais.estado()) {
+      const prefixo = `CANAL_${canal.id}_`.toUpperCase().replace(/[^A-Z0-9_]/g, '_')
+      for (const s of runtime.secrets.list()) if (s.name.startsWith(prefixo)) anotar(s.name, 'canal', canal.nome)
+    }
+    return usos
+  }
+
+  /** Chaves guardadas e esperadas, com onde cada uma e usada e se ha teste automatico. */
+  private listaDeChaves(): Extract<ServerFrame, { type: 'secrets.list' }> {
+    const { runtime } = this
+    const usos = this.usosDasChaves()
+    const guardadas = runtime.secrets.list()
+    const nomes = new Set([...guardadas.map((s) => s.name), ...usos.keys()])
+    const secrets = [...nomes].sort().flatMap((name) => {
+      const info = guardadas.find((s) => s.name === name)
+      const valor = info ? undefined : runtime.secrets.get(name)
+      const usadaPor = usos.get(name) ?? []
+      if (!info && !valor && !usadaPor.length) return []
+      if (info && info.source === 'env' && !info.length && !usadaPor.length) return []
+      const base = info ?? { name, hint: valor ? valor.slice(-4) : '', length: valor?.length ?? 0, updatedAt: 0, source: 'env' as const }
+      const testavel = chaveDeProvedorTestavel(name) || usadaPor.some((u) => u.tipo === 'conector')
+      return [{ name, hint: base.hint, length: base.length, updated_at: base.updatedAt, source: base.source, usos: usadaPor, testavel }]
+    })
+    return { type: 'secrets.list', secrets }
+  }
+
+  /** Testa uma chave: provedor de modelo pela listagem de modelos, conector reconectando quem usa a chave. */
+  private async testarChave(nome: string): Promise<{ ok: boolean; mensagem: string }> {
+    const valor = this.runtime.secrets.get(nome)
+    if (!valor) return { ok: false, mensagem: 'a chave ainda não foi cadastrada' }
+    if (chaveDeProvedorTestavel(nome)) return testarChaveDeProvedor(nome, valor)
+    const conectores = (this.usosDasChaves().get(nome) ?? []).filter((u) => u.tipo === 'conector').map((u) => u.nome)
+    if (!conectores.length) return { ok: false, mensagem: 'não há teste automático para essa chave' }
+    const falhas: string[] = []
+    for (const conector of conectores) {
+      await this.runtime.mcp.close(conector)
+      try {
+        await this.connectMcp(conector)
+      } catch (err) {
+        falhas.push(`${conector}: ${describe(err)}`)
+      }
+    }
+    this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
+    if (falhas.length) return { ok: false, mensagem: `o conector não conectou com essa chave. ${falhas.join('; ')}` }
+    return { ok: true, mensagem: conectores.length === 1 ? `o conector ${conectores[0]} conectou` : `os conectores ${conectores.join(', ')} conectaram` }
+  }
+
+  /** Modelos e agentes que declaram o conector. */
+  private usosDoConector(nome: string): string[] {
+    const papeis = [...this.runtime.repo.roles.values()].filter((p) => p.tools?.mcp?.includes(nome)).map((p) => p.name)
+    return [...new Set([...agentsUsing(this.runtime.config.agentsDir, nome), ...papeis])]
+  }
+
   /** Estado de cada servidor MCP declarado, com transporte, ligado e quantas ferramentas expoe. */
   serverList() {
     const connected = new Set(this.runtime.mcp.connected())
@@ -779,7 +911,7 @@ export class ConnectionHub {
       url: cfg.url ?? null,
       tools: this.runtime.registry.names().filter((t) => t.startsWith(`${name}__`)).length,
       error: this.mcpErrors.get(name) ?? null,
-      agents: agentsUsing(this.runtime.config.agentsDir, name),
+      agents: this.usosDoConector(name),
       oauth: cfg.oauth ? (this.runtime.oauth.autorizado(name) ? ("autorizado" as const) : ("pendente" as const)) : null,
     }))
   }
