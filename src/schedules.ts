@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3'
 import { Cron } from 'croner'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ScheduleSchema, type ScheduleParsed, type ScheduleSpec, type ScheduleStatus, type ServerFrame } from '@agent-hub/core'
 import type { AutomationRunner } from './automation.js'
@@ -68,6 +68,35 @@ export class Scheduler {
     const status = this.get(spec.id)!
     this.broadcast({ type: 'schedule.saved', schedule: status })
     return status
+  }
+
+  /** Salva uma rotina vinda da interface no arquivo schedules/<id>.json, para o reinicio nao desfazer a edicao. */
+  salvar(input: unknown, original?: string): ScheduleStatus {
+    const spec = ScheduleSchema.parse(input)
+    if (original && original !== spec.id && this.get(spec.id)) throw new Error(`já existe uma rotina com o nome ${spec.id}`)
+    const status = this.upsert(spec, 'file')
+    const dir = join(this.runtime.config.agentsDir, 'schedules')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, `${spec.id}.json`), `${JSON.stringify(spec, null, 2)}\n`)
+    if (original && original !== spec.id) this.apagar(original)
+    return status
+  }
+
+  /** Apaga a rotina do banco e o arquivo dela, se houver. */
+  apagar(id: string): boolean {
+    const arquivo = join(this.runtime.config.agentsDir, 'schedules', `${id}.json`)
+    const tinhaArquivo = existsSync(arquivo)
+    if (tinhaArquivo) rmSync(arquivo)
+    return this.delete(id) || tinhaArquivo
+  }
+
+  /** Rele schedules/*.json e tira do banco as rotinas de arquivo que deixaram de existir. */
+  recarregarArquivos(): void {
+    this.loadFiles()
+    const dir = join(this.runtime.config.agentsDir, 'schedules')
+    for (const row of this.db.prepare("SELECT id FROM schedules WHERE source = 'file'").all() as { id: string }[]) {
+      if (!existsSync(join(dir, `${row.id}.json`))) this.delete(row.id)
+    }
   }
 
   delete(id: string): boolean {
@@ -143,4 +172,12 @@ export function nextRun(spec: Pick<ScheduleParsed, 'cron' | 'at' | 'timezone'>, 
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** Proximos disparos de um horario, para a interface mostrar antes de salvar. */
+export function proximasExecucoes(spec: { cron?: string; at?: number; timezone: string }, quantidade = 3): number[] {
+  const agora = Date.now()
+  if (spec.at !== undefined) return spec.at > agora ? [spec.at] : []
+  if (!spec.cron) return []
+  return new Cron(spec.cron, { timezone: spec.timezone }).nextRuns(quantidade, new Date(agora)).map((d) => d.getTime())
 }

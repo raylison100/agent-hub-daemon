@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
   contextDir,
@@ -11,6 +11,8 @@ import {
   memoryDir,
   protocolVersion,
   resolveInside,
+  roleDetail,
+  serializeRole,
   specsDir,
   type ClientFrame,
   type HealthItem,
@@ -24,7 +26,7 @@ import { adicionarPlugin, alternarPlugin, criarPapelDoPlugin, pluginsDoClaudeCod
 import { addServers, agentsUsing, claudeCodeServers, parseServers, profileServers, removeServer, setAgentServers, setEnabled } from './connectors.js'
 import { autoAgent, draftPolicy, type Runtime } from './runtime.js'
 import type { Canais } from './canais/index.js'
-import type { Scheduler } from './schedules.js'
+import { proximasExecucoes, type Scheduler } from './schedules.js'
 import type { Triggers } from './triggers.js'
 import { WorkflowEngine } from './workflows.js'
 
@@ -214,6 +216,7 @@ export class ConnectionHub {
       }
       case 'daemon.reload': {
         runtime.reload()
+        this.scheduler.recarregarArquivos()
         send({ type: 'daemon.status', supervisionado: supervisionado(), reiniciando: false, detalhe: 'configuração recarregada: perfis, papéis, skills, preços, conectores e agendamentos' })
         this.broadcast({ type: 'agents.list', agents: runtime.agents(), roles: runtime.roles(), errors: runtime.repo.errors })
         this.broadcast({ type: 'mcp.servers', servers: this.serverList() })
@@ -461,11 +464,57 @@ export class ConnectionHub {
         send({ type: 'schedule.list', schedules: this.scheduler.list(), paused: this.scheduler.paused })
         return
       case 'schedule.upsert':
-        this.scheduler.upsert(frame.schedule)
+        this.scheduler.salvar(frame.schedule, frame.original)
         return
       case 'schedule.delete':
-        if (!this.scheduler.delete(frame.id)) throw new Error('agendamento não encontrado')
+        if (!this.scheduler.apagar(frame.id)) throw new Error('rotina não encontrada')
         return
+      case 'schedule.preview':
+        try {
+          send({ type: 'schedule.preview', next: proximasExecucoes({ cron: frame.cron, at: frame.at, timezone: frame.timezone }) })
+        } catch (err) {
+          send({ type: 'schedule.preview', next: [], erro: describe(err) })
+        }
+        return
+      case 'role.get': {
+        const existente = frame.name ? runtime.repo.roles.get(frame.name) : undefined
+        if (frame.name && !existente) throw new Error(`agente não encontrado: ${frame.name}`)
+        send({
+          type: 'role.detail',
+          role: existente
+            ? roleDetail(existente)
+            : { name: '', description: '', models: [], tools: { native: [], mcp: [] }, skills: [], policy: 'padrao', max_steps: null, budget: {}, prompt: '' },
+          policies: [...runtime.repo.policies.keys()].sort(),
+          native_tools: runtime.registry.names().filter((n) => !n.includes('__')).sort(),
+        })
+        return
+      }
+      case 'role.save': {
+        const texto = serializeRole(frame.role)
+        const pasta = join(runtime.config.agentsDir, 'roles')
+        const destino = join(pasta, `${frame.role.name}.md`)
+        const anterior = frame.original ? runtime.repo.roles.get(frame.original) : undefined
+        if (frame.original && !anterior) throw new Error(`agente não encontrado: ${frame.original}`)
+        if ((!anterior || frame.original !== frame.role.name) && runtime.repo.roles.has(frame.role.name)) throw new Error(`já existe um agente chamado ${frame.role.name}`)
+        mkdirSync(pasta, { recursive: true })
+        writeFileSync(destino, texto)
+        if (anterior && anterior.file !== destino && existsSync(anterior.file)) rmSync(anterior.file)
+        runtime.reload()
+        send({ type: 'role.saved', name: frame.role.name })
+        this.broadcast({ type: 'agents.list', agents: runtime.agents(), roles: runtime.roles(), errors: runtime.repo.errors })
+        return
+      }
+      case 'role.delete': {
+        const papel = runtime.repo.roles.get(frame.name)
+        if (!papel) throw new Error(`agente não encontrado: ${frame.name}`)
+        const rotinas = this.scheduler.list().filter((s) => s.role === frame.name).map((s) => s.id)
+        if (rotinas.length) throw new Error(`o agente ${frame.name} é usado pelas rotinas ${rotinas.join(', ')}; troque o agente delas antes de apagar`)
+        if (existsSync(papel.file)) rmSync(papel.file)
+        runtime.reload()
+        send({ type: 'role.deleted', name: frame.name })
+        this.broadcast({ type: 'agents.list', agents: runtime.agents(), roles: runtime.roles(), errors: runtime.repo.errors })
+        return
+      }
       case 'schedule.run_now':
         void this.scheduler.runNow(frame.id).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
         return
