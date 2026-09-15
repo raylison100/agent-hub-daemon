@@ -1,6 +1,6 @@
 {
   "name": "agent-hub-daemon",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Servico local do Agent Hub: sessoes, runs, ferramentas, aprovacoes e API WebSocket",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Raylison Nunes (https://github.com/raylison100)",
