@@ -1,17 +1,19 @@
 import type { Database } from 'better-sqlite3'
 import { randomUUID } from 'node:crypto'
-import type { AutomationRun, ServerFrame } from '@agent-hub/core'
+import type { AutomationChannel, AutomationRun, Message, ServerFrame } from '@agent-hub/core'
 import { draftPolicy, type Runtime } from './runtime.js'
 
 export interface AutomationSpec {
   kind: 'schedule' | 'trigger'
   id: string
   agent: string
+  role?: string
   workspace: string
   prompt: string
   mode: 'draft' | 'normal'
   budget: { run_usd: number; day_usd: number }
   overlap: 'queue' | 'skip'
+  notify?: AutomationChannel[]
 }
 
 export interface ExecuteOptions {
@@ -93,6 +95,7 @@ export class AutomationRunner {
     const automationRunId = randomUUID()
     try {
       const session = this.runtime.store.create(spec.agent, spec.workspace, opts.title, spec.kind)
+      if (spec.role) this.runtime.store.update(session.id, { role: spec.role })
       this.db
         .prepare('INSERT INTO automation_runs (id, kind, automation_id, session_id, run_id, started_at, status) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(automationRunId, spec.kind, spec.id, session.id, runId, Date.now(), 'running')
@@ -124,7 +127,19 @@ export class AutomationRunner {
       this.db
         .prepare('UPDATE automation_runs SET finished_at = ?, status = ?, cost_usd = ? WHERE id = ?')
         .run(Date.now(), result.stop, result.costUsd, automationRunId)
-      this.broadcast({ type: 'automation.finished', kind: spec.kind, id: spec.id, session_id: session.id, run_id: runId, stop: result.stop, cost_usd: result.costUsd })
+      const notify = spec.notify?.length ? spec.notify : undefined
+      this.broadcast({
+        type: 'automation.finished',
+        kind: spec.kind,
+        id: spec.id,
+        session_id: session.id,
+        run_id: runId,
+        stop: result.stop,
+        cost_usd: result.costUsd,
+        workspace: spec.workspace,
+        notify,
+        text: notify ? finalText(result.appended) : undefined,
+      })
       void this.runtime.push.send({
         title: `Automacao ${spec.id} terminou`,
         body: `${result.stop}, ${result.costUsd.toFixed(4)} USD`,
@@ -160,6 +175,16 @@ function toAutomationRun(r: AutomationRunRow): AutomationRun {
     status: r.status,
     costUsd: r.cost_usd,
   }
+}
+
+/** Texto da ultima resposta do agente no run, que vai para os canais avisados. */
+export function finalText(appended: Message[]): string | undefined {
+  const last = [...appended].reverse().find((m) => m.role === 'assistant' && m.parts.some((p) => p.type === 'text'))
+  const text = last?.parts
+    .map((p) => (p.type === 'text' ? p.text : ''))
+    .join('')
+    .trim()
+  return text || undefined
 }
 
 function describe(err: unknown): string {

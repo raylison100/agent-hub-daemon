@@ -56,6 +56,7 @@ export class Scheduler {
   upsert(input: unknown, source: 'file' | 'db' = 'db'): ScheduleStatus {
     const spec = ScheduleSchema.parse(input)
     this.runtime.profile(spec.agent)
+    if (spec.role) this.runtime.role(spec.role)
     this.runtime.assertWorkspace(spec.workspace)
     const next = spec.enabled ? nextRun(spec, Date.now()) : null
     this.db
