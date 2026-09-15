@@ -54,6 +54,7 @@ export interface TipoDeCanal {
   passos: string[]
   campos: CampoDoCanal[]
   botoes: boolean
+  link(conta: string): string | null
   validar(valores: Record<string, string>): Promise<{ conta: string }>
   criar(valores: Record<string, string>): Transporte
 }

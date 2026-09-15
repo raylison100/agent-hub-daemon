@@ -126,10 +126,12 @@ export const telegram: TipoDeCanal = {
     'No Telegram, abra uma conversa com @BotFather e envie /newbot.',
     'Escolha um nome e um usuario terminado em "bot". O BotFather responde com o token do bot.',
     'Cole o token abaixo e salve. O Agent Hub confere o token e mostra o nome do bot.',
-    'Ligue o canal e mande qualquer mensagem para o seu bot. Voce aparece em "Pediram acesso": clique em Permitir.',
+    'Ligue o canal, abra o bot pelo link que aparece ao lado da conta e mande qualquer mensagem. Voce aparece em "Pediram acesso": clique em Permitir.',
+    'Com a pessoa permitida, use "Enviar mensagem de teste" para conferir.',
   ],
   campos: [{ chave: 'token', rotulo: 'Token do bot', segredo: true, obrigatorio: true, exemplo: '123456789:AA...' }],
   botoes: true,
+  link: (conta) => `https://t.me/${conta.replace(/^@/, '')}`,
   async validar(valores) {
     const me = await new TelegramApi(valores.token ?? '').me().catch((err: unknown) => {
       throw new Error(`token recusado pelo Telegram: ${err instanceof Error ? err.message : String(err)}`)

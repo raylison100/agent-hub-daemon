@@ -585,32 +585,41 @@ export class ConnectionHub {
         send({ type: 'secrets.list', secrets: runtime.secrets.list().map((s) => ({ name: s.name, hint: s.hint, length: s.length, updated_at: s.updatedAt, source: s.source })) })
         return
       case 'canais.estado':
-        send({ type: 'canais.estado', canais: this.canais.estado() })
+        send(this.estadoDosCanais())
         return
+      case 'canal.criar': {
+        const criado = this.canais.criar(frame.tipo, frame.nome)
+        this.responderCanais(send, { criado, aviso: 'canal criado' })
+        return
+      }
       case 'canal.salvar':
         await this.canais.salvar(frame.canal, frame.valores)
-        send({ type: 'canais.estado', canais: this.canais.estado(), aviso: 'canal salvo' })
+        this.responderCanais(send, { aviso: 'credenciais conferidas e salvas' })
+        return
+      case 'canal.padrao':
+        this.canais.definirPadrao(frame.canal, { nome: frame.nome, agente: frame.agente, papel: frame.papel, workspace: frame.workspace ? runtime.assertWorkspace(frame.workspace) : undefined })
+        this.responderCanais(send, { aviso: 'padroes salvos; as proximas conversas usam esses valores' })
         return
       case 'canal.ligar':
         this.canais.ligar(frame.canal, frame.ligado)
-        send({ type: 'canais.estado', canais: this.canais.estado() })
+        this.responderCanais(send)
         return
       case 'canal.permitir':
         this.canais.permitir(frame.canal, frame.pessoa)
-        send({ type: 'canais.estado', canais: this.canais.estado() })
+        this.responderCanais(send)
         return
       case 'canal.remover_pessoa':
         this.canais.removerPessoa(frame.canal, frame.pessoa)
-        send({ type: 'canais.estado', canais: this.canais.estado() })
+        this.responderCanais(send)
         return
       case 'canal.testar': {
         const aviso = await this.canais.testar(frame.canal)
-        send({ type: 'canais.estado', canais: this.canais.estado(), aviso })
+        this.responderCanais(send, { aviso })
         return
       }
       case 'canal.apagar':
         this.canais.apagar(frame.canal)
-        send({ type: 'canais.estado', canais: this.canais.estado() })
+        this.responderCanais(send)
         return
       case 'fs.list': {
         const workspace = this.workspaceOf(frame.session_id, frame.workspace)
@@ -691,6 +700,17 @@ export class ConnectionHub {
         void this.workflows.resume(frame.run_id).catch((err: unknown) => send({ type: 'error', message: describe(err), ref: frame.type }))
         return
     }
+  }
+
+  /** Responde a quem alterou um canal e avisa as outras telas abertas. */
+  private responderCanais(send: (f: ServerFrame) => void, extra: { aviso?: string; criado?: string } = {}): void {
+    send(this.estadoDosCanais(extra))
+    this.broadcast(this.estadoDosCanais())
+  }
+
+  /** Quadro com os tipos disponiveis e o estado de cada canal criado. */
+  estadoDosCanais(extra: { aviso?: string; criado?: string } = {}): Extract<ServerFrame, { type: 'canais.estado' }> {
+    return { type: 'canais.estado', tipos: this.canais.tipos(), canais: this.canais.estado(), ...extra }
   }
 
   /** Estado de cada servidor MCP declarado, com transporte, ligado e quantas ferramentas expoe. */

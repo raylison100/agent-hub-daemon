@@ -145,7 +145,7 @@ export async function startServer(runtime: Runtime, token: string, relay?: Relay
     daemonToken: token,
     workspacePadrao: runtime.config.workspaces[0] ?? runtime.config.home,
     log,
-    mudou: () => hub.broadcast({ type: 'canais.estado', canais: canais.estado() }),
+    mudou: () => hub.broadcast(hub.estadoDosCanais()),
   })
   hub.canais = canais
   canais.iniciar()

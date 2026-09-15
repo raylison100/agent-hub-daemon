@@ -16,7 +16,17 @@ export interface ConversaDoCanal {
   agent?: string
 }
 
+export interface PadraoDoCanal {
+  agente?: string
+  papel?: string
+  workspace?: string
+}
+
 export interface ConfigDoCanal {
+  id: string
+  tipo: TipoDeCanal['id']
+  nome: string
+  padrao: PadraoDoCanal
   ligado: boolean
   conta: string | null
   valores: Record<string, string>
@@ -65,7 +75,7 @@ export class PonteDeCanal {
     private readonly transporte: Transporte,
     private readonly deps: DependenciasDaPonte,
   ) {
-    this.daemon = new NodeDaemonClient({ url: deps.daemonUrl, token: deps.daemonToken, client: `canal-${tipo.id}`, log: (m) => deps.log(m) })
+    this.daemon = new NodeDaemonClient({ url: deps.daemonUrl, token: deps.daemonToken, client: `canal-${deps.config().id}`, log: (m) => deps.log(m) })
   }
 
   iniciar(): void {
@@ -118,10 +128,20 @@ export class PonteDeCanal {
       await this.transporte.enviar(m.conversa, 'Daemon desconectado. Tente de novo em instantes.')
       return
     }
-    const estado = this.deps.config().conversas[m.conversa] ?? {}
+    const config = this.deps.config()
+    const estado = config.conversas[m.conversa] ?? {}
     let sessionId = estado.sessionId
     if (!sessionId) {
-      const criada = await this.daemon.request({ type: 'session.create', workspace: estado.workspace ?? this.deps.workspacePadrao, agent: estado.agent, text: texto }, 'session.created')
+      const criada = await this.daemon.request(
+        {
+          type: 'session.create',
+          workspace: estado.workspace ?? config.padrao.workspace ?? this.deps.workspacePadrao,
+          agent: estado.agent ?? config.padrao.agente,
+          role: config.padrao.papel,
+          text: texto,
+        },
+        'session.created',
+      )
       sessionId = criada.session.id
       this.salvarConversa(m.conversa, { ...estado, sessionId })
       await this.transporte.enviar(m.conversa, `Sessao nova com ${criada.session.agent}${criada.routed ? ` (roteado por ${criada.routed.intent ?? 'regra'})` : ''}.`)
@@ -152,7 +172,7 @@ export class PonteDeCanal {
         return
       case '/workspace':
         this.salvarConversa(conversa, { ...estado, workspace: arg || undefined, sessionId: undefined })
-        await this.transporte.enviar(conversa, arg ? `Workspace: ${arg}` : `Workspace padrao: ${this.deps.workspacePadrao}`)
+        await this.transporte.enviar(conversa, arg ? `Workspace: ${arg}` : `Workspace padrao: ${this.deps.config().padrao.workspace ?? this.deps.workspacePadrao}`)
         return
       case '/agente':
         this.salvarConversa(conversa, { ...estado, agent: arg || undefined, sessionId: undefined })
@@ -240,7 +260,7 @@ export class PonteDeCanal {
       void envio.catch((err: unknown) => this.deps.log(descrever(err)))
       return
     }
-    if (f.type === 'automation.finished' && f.notify?.includes(this.tipo.id)) {
+    if (f.type === 'automation.finished' && f.notify?.some((n) => n === this.deps.config().id)) {
       const conversa = this.conversaPadrao()
       if (!conversa) {
         this.deps.log(`automacao ${f.id} terminou, mas nenhuma pessoa permitida falou com o bot ainda`)
