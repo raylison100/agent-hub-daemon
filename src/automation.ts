@@ -14,6 +14,7 @@ export interface AutomationSpec {
   budget: { run_usd: number; day_usd: number }
   overlap: 'queue' | 'skip'
   notify?: AutomationChannel[]
+  timezone?: string
 }
 
 export interface ExecuteOptions {
@@ -104,7 +105,7 @@ export class AutomationRunner {
       const result = await this.runtime.run({
         onApprovalPush: true,
         sessionId: session.id,
-        text: spec.prompt,
+        text: `${localNow(spec.timezone)}\n\n${spec.prompt}`,
         runId,
         policyOverride: spec.mode === 'draft' ? draftPolicy : undefined,
         budgetOverride: { runUsd: spec.budget.run_usd },
@@ -175,6 +176,12 @@ function toAutomationRun(r: AutomationRunRow): AutomationRun {
     status: r.status,
     costUsd: r.cost_usd,
   }
+}
+
+/** Linha com a data e a hora do disparo no fuso da automacao, para o agente nao deduzir a data em UTC. */
+export function localNow(timezone = 'UTC', now = new Date()): string {
+  const quando = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, dateStyle: 'full', timeStyle: 'short' }).format(now)
+  return `Data e hora local do disparo: ${quando} (${timezone}).`
 }
 
 /** Texto da ultima resposta do agente no run, que vai para os canais avisados. */
