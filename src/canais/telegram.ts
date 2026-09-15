@@ -12,6 +12,7 @@ interface TelegramMessage {
   chat: { id: number; type: string }
   from?: TelegramUser
   text?: string
+  reply_to_message?: { message_id: number }
 }
 
 interface TelegramUpdate {
@@ -47,14 +48,17 @@ export class TelegramApi {
     }
   }
 
-  async send(chatId: string, text: string, botoes?: Botao[][]): Promise<void> {
+  async send(chatId: string, text: string, botoes?: Botao[][]): Promise<string[]> {
+    const ids: string[] = []
     for (const chunk of split(text)) {
-      await this.call('sendMessage', {
+      const res = await this.call<{ message_id: number }>('sendMessage', {
         chat_id: chatId,
         text: chunk,
         reply_markup: botoes ? { inline_keyboard: botoes.map((l) => l.map((b) => ({ text: b.texto, callback_data: b.dados }))) } : undefined,
       })
+      ids.push(String(res.message_id))
     }
+    return ids
   }
 
   /** Foto de perfil pequena do usuario, baixada pelo daemon para o token nao sair da maquina. */
@@ -70,15 +74,16 @@ export class TelegramApi {
     return { mediaType: res.headers.get('content-type')?.startsWith('image/') ? res.headers.get('content-type')! : 'image/jpeg', base64: Buffer.from(await res.arrayBuffer()).toString('base64') }
   }
 
-  async sendPhoto(chatId: string, imagem: ImagemParaEnviar): Promise<void> {
+  async sendPhoto(chatId: string, imagem: ImagemParaEnviar): Promise<string[]> {
     const form = new FormData()
     form.append('chat_id', chatId)
     if (imagem.legenda) form.append('caption', imagem.legenda.slice(0, 1024))
     const campo = imagem.bytes.length > 9_500_000 ? 'document' : 'photo'
     form.append(campo, new Blob([new Uint8Array(imagem.bytes)], { type: imagem.mediaType }), imagem.nome)
     const res = await fetch(`https://api.telegram.org/bot${this.token}/${campo === 'photo' ? 'sendPhoto' : 'sendDocument'}`, { method: 'POST', body: form, signal: AbortSignal.timeout(60000) })
-    const json = (await res.json()) as { ok: boolean; description?: string }
+    const json = (await res.json()) as { ok: boolean; description?: string; result?: { message_id: number } }
     if (!json.ok) throw new Error(json.description ?? `HTTP ${res.status}`)
+    return json.result ? [String(json.result.message_id)] : []
   }
 
   async answerCallback(id: string, text: string): Promise<void> {
@@ -114,7 +119,12 @@ class TransporteTelegram implements Transporte {
       for await (const u of this.api.updates(signal, eventos.log)) {
         const m = u.message
         if (m?.from && m.text) {
-          eventos.mensagem({ conversa: String(m.chat.id), remetente: pessoa(m.from), texto: m.text })
+          eventos.mensagem({
+            conversa: String(m.chat.id),
+            remetente: pessoa(m.from),
+            texto: m.text,
+            respondendoA: m.reply_to_message ? String(m.reply_to_message.message_id) : undefined,
+          })
         }
         const cb = u.callback_query
         if (cb?.data) {
@@ -137,11 +147,11 @@ class TransporteTelegram implements Transporte {
     this.controller = null
   }
 
-  enviar(conversa: string, texto: string, botoes?: Botao[][]): Promise<void> {
+  enviar(conversa: string, texto: string, botoes?: Botao[][]): Promise<string[]> {
     return this.api.send(conversa, texto, botoes)
   }
 
-  enviarImagem(conversa: string, imagem: ImagemParaEnviar): Promise<void> {
+  enviarImagem(conversa: string, imagem: ImagemParaEnviar): Promise<string[]> {
     return this.api.sendPhoto(conversa, imagem)
   }
 }

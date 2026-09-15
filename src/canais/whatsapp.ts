@@ -95,12 +95,14 @@ class TransporteWhatsApp implements Transporte {
     this.timer = null
   }
 
-  enviar(conversa: string, texto: string): Promise<void> {
-    return this.api.enviarTexto(conversa, texto)
+  async enviar(conversa: string, texto: string): Promise<string[]> {
+    await this.api.enviarTexto(conversa, texto)
+    return []
   }
 
-  enviarImagem(conversa: string, imagem: ImagemParaEnviar): Promise<void> {
-    return this.api.enviarImagem(conversa, imagem)
+  async enviarImagem(conversa: string, imagem: ImagemParaEnviar): Promise<string[]> {
+    await this.api.enviarImagem(conversa, imagem)
+    return []
   }
 
   private async buscar(eventos: EventosDoTransporte): Promise<void> {

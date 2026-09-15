@@ -105,7 +105,7 @@ export class AutomationRunner {
       const result = await this.runtime.run({
         onApprovalPush: true,
         sessionId: session.id,
-        text: `${localNow(spec.timezone)}\n\n${spec.prompt}`,
+        text: `${spec.prompt}\n\n${localNow(spec.timezone)}`,
         runId,
         policyOverride: spec.mode === 'draft' ? draftPolicy : undefined,
         budgetOverride: { runUsd: spec.budget.run_usd },
@@ -129,6 +129,8 @@ export class AutomationRunner {
         .prepare('UPDATE automation_runs SET finished_at = ?, status = ?, cost_usd = ? WHERE id = ?')
         .run(Date.now(), result.stop, result.costUsd, automationRunId)
       const notify = spec.notify?.length ? spec.notify : undefined
+      const resposta = tituloDaResposta(finalText(result.appended))
+      if (resposta.titulo) this.runtime.store.update(session.id, { title: resposta.titulo })
       this.broadcast({
         type: 'automation.finished',
         kind: spec.kind,
@@ -139,7 +141,7 @@ export class AutomationRunner {
         cost_usd: result.costUsd,
         workspace: spec.workspace,
         notify,
-        text: notify ? finalText(result.appended) : undefined,
+        text: notify ? resposta.texto : undefined,
       })
       void this.runtime.push.send({
         title: `Automacao ${spec.id} terminou`,
@@ -182,6 +184,15 @@ function toAutomationRun(r: AutomationRunRow): AutomationRun {
 export function localNow(timezone = 'UTC', now = new Date()): string {
   const quando = new Intl.DateTimeFormat('pt-BR', { timeZone: timezone, dateStyle: 'full', timeStyle: 'short' }).format(now)
   return `Data e hora local do disparo: ${quando} (${timezone}).`
+}
+
+/** Separa a linha "[titulo] ..." do comeco da resposta, que da nome a sessao da automacao e nao vai para os canais. */
+export function tituloDaResposta(texto: string | undefined): { titulo?: string; texto?: string } {
+  if (!texto) return { texto }
+  const achado = /^\s*\[titulo\]\s*(.+?)\s*(?:\n|$)/i.exec(texto)
+  if (!achado) return { texto }
+  const resto = texto.slice(achado[0].length).trim()
+  return { titulo: achado[1]!.slice(0, 120), texto: resto || undefined }
 }
 
 /** Texto da ultima resposta do agente no run, que vai para os canais avisados. */

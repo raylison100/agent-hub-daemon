@@ -38,6 +38,7 @@ export interface ConfigDoCanal {
   permitidos: PessoaPermitida[]
   pedidos: PedidoDeAcesso[]
   conversas: Record<string, ConversaDoCanal>
+  mensagens?: Record<string, string>
 }
 
 export interface DependenciasDaPonte {
@@ -51,6 +52,7 @@ export interface DependenciasDaPonte {
 
 interface RunEmCurso {
   conversa: string
+  sessionId: string
   texto: string[]
   ferramentas: number
 }
@@ -109,20 +111,33 @@ export class PonteDeCanal {
   }
 
   /** Envia a resposta de um agente: o texto primeiro e depois as imagens citadas em markdown, quando o canal aceita imagem. */
-  private async responder(conversa: string, texto: string, workspace: string): Promise<void> {
+  private async responder(conversa: string, texto: string, workspace: string, sessionId: string): Promise<void> {
+    const ids: string[] = []
     if (!this.transporte.enviarImagem) {
-      await this.transporte.enviar(conversa, texto)
-      return
-    }
-    const separado = separarImagens(texto, workspace)
-    await this.transporte.enviar(conversa, separado.texto || '(imagens abaixo)')
-    for (const imagem of separado.imagens) {
-      try {
-        await this.transporte.enviarImagem(conversa, imagem)
-      } catch (err) {
-        await this.transporte.enviar(conversa, `Nao consegui enviar ${imagem.nome}: ${descrever(err)}`)
+      ids.push(...(await this.transporte.enviar(conversa, texto)))
+    } else {
+      const separado = separarImagens(texto, workspace)
+      ids.push(...(await this.transporte.enviar(conversa, separado.texto || '(imagens abaixo)')))
+      for (const imagem of separado.imagens) {
+        try {
+          ids.push(...(await this.transporte.enviarImagem(conversa, imagem)))
+        } catch (err) {
+          await this.transporte.enviar(conversa, `Nao consegui enviar ${imagem.nome}: ${descrever(err)}`)
+        }
       }
     }
+    this.lembrarMensagens(ids, sessionId)
+  }
+
+  /** Guarda de qual sessao veio cada mensagem enviada, para a resposta citando uma delas voltar para a mesma sessao. */
+  private lembrarMensagens(ids: string[], sessionId: string): void {
+    if (ids.length === 0) return
+    this.deps.alterar((c) => {
+      const mapa = { ...(c.mensagens ?? {}) }
+      for (const id of ids) mapa[id] = sessionId
+      const chaves = Object.keys(mapa)
+      c.mensagens = Object.fromEntries(chaves.slice(Math.max(0, chaves.length - 500)).map((k) => [k, mapa[k]!]))
+    })
   }
 
   private workspaceDa(conversa: string): string {
@@ -157,7 +172,9 @@ export class PonteDeCanal {
     }
     const config = this.deps.config()
     const estado = config.conversas[m.conversa] ?? {}
-    let sessionId = estado.sessionId
+    const citada = m.respondendoA ? config.mensagens?.[m.respondendoA] : undefined
+    if (citada && citada !== estado.sessionId) this.salvarConversa(m.conversa, { ...estado, sessionId: citada })
+    let sessionId = citada ?? estado.sessionId
     if (!sessionId) {
       const criada = await this.daemon.request(
         {
@@ -175,7 +192,7 @@ export class PonteDeCanal {
     }
     this.conversaDaSessao.set(sessionId, m.conversa)
     const iniciado = await this.daemon.request({ type: 'run.start', session_id: sessionId, text: texto }, 'run.started')
-    this.runs.set(iniciado.run_id, { conversa: m.conversa, texto: [], ferramentas: 0 })
+    this.runs.set(iniciado.run_id, { conversa: m.conversa, sessionId, texto: [], ferramentas: 0 })
   }
 
   private async registrarPedido(m: MensagemRecebida): Promise<void> {
@@ -271,7 +288,7 @@ export class PonteDeCanal {
         this.runs.delete(f.run_id)
         const corpo = run.texto.join('').trim() || '(sem texto)'
         const rodape = `\n\n[${e.stop}, ${e.steps} passos, ${run.ferramentas} ferramentas, ${e.costUsd.toFixed(4)} USD]${e.error ? `\n${e.error}` : ''}`
-        void this.responder(run.conversa, corpo + rodape, this.workspaceDa(run.conversa)).catch((err: unknown) => this.deps.log(descrever(err)))
+        void this.responder(run.conversa, corpo + rodape, this.workspaceDa(run.conversa), run.sessionId).catch((err: unknown) => this.deps.log(descrever(err)))
       }
       return
     }
@@ -301,7 +318,7 @@ export class PonteDeCanal {
         this.conversaDaSessao.set(f.session_id, conversa)
       }
       const corpo = f.text ? `${f.text}\n\n[${status} Responda aqui para continuar essa sessao; /nova volta ao normal.]` : status
-      void this.responder(conversa, corpo, f.workspace ?? this.workspaceDa(conversa)).catch((err: unknown) => this.deps.log(descrever(err)))
+      void this.responder(conversa, corpo, f.workspace ?? this.workspaceDa(conversa), f.session_id).catch((err: unknown) => this.deps.log(descrever(err)))
     }
   }
 

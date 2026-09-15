@@ -10,6 +10,7 @@ export interface MensagemRecebida {
   conversa: string
   remetente: Pessoa
   texto: string
+  respondendoA?: string
 }
 
 export interface BotaoRecebido {
@@ -34,8 +35,8 @@ export interface EventosDoTransporte {
 export interface Transporte {
   iniciar(eventos: EventosDoTransporte): void
   parar(): void
-  enviar(conversa: string, texto: string, botoes?: Botao[][]): Promise<void>
-  enviarImagem?(conversa: string, imagem: ImagemParaEnviar): Promise<void>
+  enviar(conversa: string, texto: string, botoes?: Botao[][]): Promise<string[]>
+  enviarImagem?(conversa: string, imagem: ImagemParaEnviar): Promise<string[]>
 }
 
 export interface ImagemParaEnviar {
