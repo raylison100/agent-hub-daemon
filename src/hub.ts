@@ -668,6 +668,12 @@ export class ConnectionHub {
         this.canais.removerPessoa(frame.canal, frame.pessoa)
         this.responderCanais(send)
         return
+      case 'canal.enviar': {
+        const workspace = frame.workspace ? runtime.assertWorkspace(frame.workspace) : frame.session_id ? runtime.store.get(frame.session_id)?.workspace : undefined
+        await this.canais.enviarMensagem(frame.canal, frame.texto, workspace, frame.session_id)
+        this.responderCanais(send, { aviso: 'mensagem enviada' })
+        return
+      }
       case 'canal.testar': {
         const aviso = await this.canais.testar(frame.canal)
         this.responderCanais(send, { aviso })

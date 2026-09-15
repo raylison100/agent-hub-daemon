@@ -74,13 +74,13 @@ export class TelegramApi {
     return { mediaType: res.headers.get('content-type')?.startsWith('image/') ? res.headers.get('content-type')! : 'image/jpeg', base64: Buffer.from(await res.arrayBuffer()).toString('base64') }
   }
 
-  async sendPhoto(chatId: string, imagem: ImagemParaEnviar): Promise<string[]> {
+  /** Envia a imagem como arquivo, sem a compressao que o Telegram aplica em foto. */
+  async sendDocument(chatId: string, imagem: ImagemParaEnviar): Promise<string[]> {
     const form = new FormData()
     form.append('chat_id', chatId)
     if (imagem.legenda) form.append('caption', imagem.legenda.slice(0, 1024))
-    const campo = imagem.bytes.length > 9_500_000 ? 'document' : 'photo'
-    form.append(campo, new Blob([new Uint8Array(imagem.bytes)], { type: imagem.mediaType }), imagem.nome)
-    const res = await fetch(`https://api.telegram.org/bot${this.token}/${campo === 'photo' ? 'sendPhoto' : 'sendDocument'}`, { method: 'POST', body: form, signal: AbortSignal.timeout(60000) })
+    form.append('document', new Blob([new Uint8Array(imagem.bytes)], { type: imagem.mediaType }), imagem.nome)
+    const res = await fetch(`https://api.telegram.org/bot${this.token}/sendDocument`, { method: 'POST', body: form, signal: AbortSignal.timeout(60000) })
     const json = (await res.json()) as { ok: boolean; description?: string; result?: { message_id: number } }
     if (!json.ok) throw new Error(json.description ?? `HTTP ${res.status}`)
     return json.result ? [String(json.result.message_id)] : []
@@ -152,7 +152,7 @@ class TransporteTelegram implements Transporte {
   }
 
   enviarImagem(conversa: string, imagem: ImagemParaEnviar): Promise<string[]> {
-    return this.api.sendPhoto(conversa, imagem)
+    return this.api.sendDocument(conversa, imagem)
   }
 }
 

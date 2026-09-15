@@ -168,6 +168,13 @@ export class Canais {
     })
   }
 
+  /** Envia uma mensagem avulsa, com imagens em markdown, para a conversa padrao do canal. */
+  async enviarMensagem(id: string, texto: string, workspace?: string, sessionId?: string): Promise<void> {
+    const ponte = this.pontes.get(id)
+    if (!ponte) throw new Error('ligue o canal antes de enviar')
+    await ponte.enviarParaConversaPadrao(texto, workspace, sessionId)
+  }
+
   async testar(id: string): Promise<string> {
     const ponte = this.pontes.get(id)
     if (!ponte) throw new Error('ligue o canal antes de testar')

@@ -110,6 +110,18 @@ export class PonteDeCanal {
     await this.transporte.enviar(conversa, texto)
   }
 
+  /** Manda texto com imagens em markdown para a conversa padrao, ligando as mensagens a uma sessao para respostas citadas voltarem a ela. */
+  async enviarParaConversaPadrao(texto: string, workspace: string | undefined, sessionId: string | undefined): Promise<void> {
+    const conversa = this.conversaPadrao()
+    if (!conversa) throw new Error('ninguém permitido ainda falou com o bot')
+    if (sessionId) {
+      const estado = this.deps.config().conversas[conversa] ?? {}
+      this.salvarConversa(conversa, { ...estado, sessionId, workspace: workspace ?? estado.workspace })
+      this.conversaDaSessao.set(sessionId, conversa)
+    }
+    await this.responder(conversa, texto, workspace ?? this.workspaceDa(conversa), sessionId ?? '')
+  }
+
   /** Envia a resposta de um agente: o texto primeiro e depois as imagens citadas em markdown, quando o canal aceita imagem. */
   private async responder(conversa: string, texto: string, workspace: string, sessionId: string): Promise<void> {
     const ids: string[] = []
